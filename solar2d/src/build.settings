@@ -1,0 +1,40 @@
+---------------------------------------------------------------------------------
+-- build.settings
+-- Solar2D build configuration for HTML5
+---------------------------------------------------------------------------------
+--[[
+PURPOSE:
+Configure the Solar2D project for HTML5 builds. This file controls
+orientation, window settings, and platform-specific options.
+
+KEY SETTINGS TO IMPLEMENT:
+1. orientation - Lock to landscape (landscapeRight, landscapeLeft)
+2. window settings - Title, default size, resizable
+3. excludeFiles - Exclude .md, .psd, etc. from builds
+
+REFERENCE:
+https://docs.coronalabs.com/guide/distribution/buildSettings/index.html
+]]
+
+settings = {
+    orientation = {
+        default = "landscapeRight",
+        supported = { "landscapeLeft", "landscapeRight" }
+    },
+
+    window = {
+        titleText = {
+            default = "Solar2D Particle Editor",
+        },
+        defaultMode = "normal",
+        defaultViewWidth = 800,
+        defaultViewHeight = 600,
+        resizable = true,
+        minViewWidth = 400,
+        minViewHeight = 300,
+    },
+
+    excludeFiles = {
+        all = { "*.psd", "*.ai", "*.md", "*.txt" },
+    },
+}

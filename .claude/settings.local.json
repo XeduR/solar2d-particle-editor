@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:\\\\xampp\\\\htdocs\\\\Solar2D Particle Editor\\\\solar2d\\\\src\\\\assets\\\\particles\"\" | find /c /v \" \")"
+    ]
+  }
+}

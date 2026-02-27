@@ -1,0 +1,7 @@
+The following images were created using Google's gemini-2.5-flash-image model:
+
+	detective_left.png
+	detective_right.png
+	fantasy.png
+	snow.png
+	scifi.png

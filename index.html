@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar2D Particle Editor</title>
+
+    <!-- Open Graph meta tags -->
+    <meta property="og:site_name" content="Solar2D Particle Editor">
+    <meta property="og:title" content="Solar2D Particle Editor">
+    <meta property="og:description" content="A browser-based particle effect editor for Solar2D - create, customize, and export particle emitters with real-time preview, built-in templates, and full scene composition.">
+    <meta property="og:image" content="https://xedur.github.io/solar2d-particle-editor/solar2d-particle-editor.png">
+    <meta property="og:image:alt" content="Solar2D Particle Editor - a dark-themed browser UI with particle effects rendered on a central canvas">
+
+    <!-- Twitter/X card meta tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Solar2D Particle Editor">
+    <meta name="twitter:description" content="A browser-based particle effect editor for Solar2D - create, customize, and export particle emitters with real-time preview, built-in templates, and full scene composition.">
+    <meta name="twitter:image" content="https://xedur.github.io/solar2d-particle-editor/solar2d-particle-editor.png">
+    <meta name="twitter:image:alt" content="Solar2D Particle Editor - a dark-themed browser UI with particle effects rendered on a central canvas">
+
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <header id="header">
+            <div class="header-left">
+                <h1>Solar2D Particle Editor <span class="beta-tag" title="This site is in beta and has some known issues. Thank you for your patience.">BETA</span></h1>
+            </div>
+            <div class="header-center">
+                <button id="btn-undo" class="icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x27F2;</button>
+                <button id="btn-redo" class="icon-btn" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x27F3;</button>
+                <span class="header-separator"></span>
+                <button id="btn-pause" class="icon-btn" title="Pause" aria-label="Pause">&#x23F8;</button>
+                <button id="btn-play" class="icon-btn" title="Play" aria-label="Play" style="display:none;">&#x25B6;</button>
+                <button id="btn-restart" class="icon-btn" title="Restart" aria-label="Restart">&#x21BB;</button>
+                <span class="header-separator"></span>
+                <button id="btn-reset-position" class="icon-btn" title="Reset Position" aria-label="Reset Position">&#x2295;</button>
+                <span class="header-separator"></span>
+                <button id="btn-reset-view" class="icon-btn" title="Reset View (zoom &amp; pan)" aria-label="Reset View">&#x2302;</button>
+                <span id="zoom-level" class="zoom-display" title="Current zoom level">100%</span>
+                <span class="header-separator"></span>
+                <button id="btn-shortcuts" class="icon-btn" title="Keyboard Shortcuts" aria-label="Keyboard Shortcuts">?</button>
+            </div>
+            <div class="header-right">
+                <div class="ui-scale-control">
+                    <label for="ui-scale-slider" title="Adjust UI scale for accessibility">Scale:</label>
+                    <input type="range" id="ui-scale-slider" min="1" max="2" step="0.05" value="1.2" title="Adjust interface size">
+                    <span id="ui-scale-value">120%</span>
+                </div>
+                <a href="https://docs.coronalabs.com/api/type/EmitterObject/index.html"
+                   target="_blank" class="help-link">Emitter docs</a>
+            </div>
+        </header>
+
+        <main id="main">
+            <aside id="sidebar-left">
+                <section class="sidebar-section">
+                    <div class="section-header-row">
+                        <h3>Scene</h3>
+                        <button id="btn-clear-scene" class="full-btn-danger" style="padding:4px 10px;border:1px solid #e74c3c;border-radius:4px;cursor:pointer">Clear scene</button>
+                    </div>
+                    <ul id="object-list" class="item-list">
+                    </ul>
+                    <div class="add-object-buttons">
+                        <button id="btn-add-emitter" class="add-obj-btn" title="Add new emitter">+ Emitter</button>
+                        <button id="btn-add-image" class="add-obj-btn" title="Add image to scene">+ Image</button>
+                        <input type="file" id="image-add-file" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none;">
+                    </div>
+                </section>
+
+                <section class="sidebar-section">
+                    <h3>ADD EMITTER FROM TEMPLATE</h3>
+                    <select id="template-select">
+                        <option value="">Select template...</option>
+                    </select>
+                    <button id="btn-import-template" class="full-btn">Import emitter</button>
+                    <input type="file" id="template-import-file" accept=".json" style="display:none;">
+                </section>
+
+                <section class="sidebar-section">
+                    <h3>Scenes</h3>
+                    <select id="scene-select">
+                        <option value="">-- Select Scene --</option>
+                    </select>
+                    <div class="scene-buttons">
+                        <button id="btn-load-scene" class="scene-btn">Load</button>
+                        <button id="btn-save-scene" class="scene-btn">Save</button>
+                        <button id="btn-delete-scene" class="scene-btn scene-btn-danger">Delete</button>
+                    </div>
+                    <label class="checkbox-row" style="margin-top:6px;">
+                        <input type="checkbox" id="toggle-autosave" checked>
+                        <span>Autosave progress</span>
+                    </label>
+                </section>
+
+                <section class="sidebar-section">
+                    <h3>Visual Settings</h3>
+                    <label class="checkbox-row">
+                        <input type="checkbox" id="toggle-grid">
+                        <span>Show grid</span>
+                    </label>
+                    <div class="grid-size-row">
+                        <input type="range" id="grid-size-slider" min="8" max="128" value="32" step="1">
+                        <input type="number" id="grid-size-number" min="8" max="128" value="32" step="1">
+                    </div>
+                    <div class="param-row" style="margin-top:6px">
+                        <label for="emitter-bounds-mode">Emitter bounds:</label>
+                        <select id="emitter-bounds-mode">
+                            <option value="hidden">Hidden</option>
+                            <option value="active">Show active</option>
+                            <option value="all">Show all</option>
+                        </select>
+                    </div>
+                    <div class="bg-color-row" style="margin-top:8px">
+                        <label class="sidebar-label">Background</label>
+                        <input type="color" id="bg-color-picker" value="#1a1a1e" title="Background color">
+                        <button id="btn-bg-reset" class="small-btn" title="Reset to default" aria-label="Reset background color">&#x21BA;</button>
+                    </div>
+                    <div class="bg-color-row">
+                        <label class="sidebar-label">Bounds</label>
+                        <input type="color" id="bounds-color-picker" value="#ffffff" title="Emitter bounds color">
+                        <button id="btn-bounds-color-reset" class="small-btn" title="Reset to default" aria-label="Reset bounds color">&#x21BA;</button>
+                    </div>
+                    <div class="bg-color-row">
+                        <label class="sidebar-label">Grid</label>
+                        <input type="color" id="grid-color-picker" value="#333338" title="Grid line color">
+                        <button id="btn-grid-color-reset" class="small-btn" title="Reset to default" aria-label="Reset grid color">&#x21BA;</button>
+                    </div>
+                </section>
+
+
+                <section class="sidebar-section">
+                    <h3>Solar2D Content Area</h3>
+                    <p class="section-hint">COMING: dynamically adjust the content area.</p>
+                    <div class="canvas-size-row">
+                        <label>W</label>
+                        <input type="number" id="canvas-width" min="176" max="2560" value="960" step="1" disabled>
+                        <span class="canvas-size-x">&times;</span>
+                        <label>H</label>
+                        <input type="number" id="canvas-height" min="144" max="1440" value="640" step="1" disabled>
+                    </div>
+                </section>
+
+                <section class="sidebar-section" id="export-section">
+                    <h3 id="export-current-header">SELECT AN EMITTER TO EXPORT</h3>
+                    <p id="export-current-message" class="export-message" style="display:none;"></p>
+                    <div class="export-buttons">
+                        <button id="btn-export-json" class="export-btn">JSON</button>
+                        <button id="btn-export-png" class="export-btn">PNG</button>
+                        <button id="btn-export-zip" class="export-btn">ZIP</button>
+                    </div>
+                    <h3>Export All</h3>
+                    <div class="export-buttons">
+                        <button id="btn-export-all-zip" class="export-btn">All ZIP</button>
+                    </div>
+                </section>
+
+                <section class="sidebar-section">
+                    <h3>Your Data</h3>
+                    <p class="sidebar-description">All uploaded images and files are stored in your browser's local storage. You may clear your data at any time.</p>
+                    <button id="btn-clear-storage" class="full-btn full-btn-danger">Clear all saved data</button>
+                </section>
+
+                <div id="sidebar-copyright">
+                    <a href="https://www.erantanen.com" target="_blank" rel="noopener">&copy; 2025-2026 Eetu Rantanen</a>
+                    <a class="repo-link" href="https://github.com/XeduR/solar2d-particle-editor" target="_blank" rel="noopener">Source available at: <img src="images/GitHub_Lockup_White.svg" alt="GitHub" height="16"></a>
+                </div>
+            </aside>
+
+            <div id="canvas-container">
+                <!-- Solar2D HTML5 build runs inside this iframe; parent communicates via postMessage -->
+                <iframe id="solar2d-iframe" src="solar2d/bin/index.html"></iframe>
+                <div id="canvas-overlay">
+                    <p>Drag to move &middot; Scroll to zoom &middot; Right-drag to pan</p>
+                </div>
+            </div>
+
+            <!-- data-param attributes bind each input to a Solar2D EmitterObject property -->
+            <aside id="sidebar-right">
+                <div id="params-container">
+                    <section class="param-section">
+                        <div class="section-header" data-toggle="general" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>General</h3>
+                        </div>
+                        <div class="section-content" id="section-general">
+                            <div class="param-row">
+                                <label for="input-maxParticles">Max Particles</label>
+                                <input type="range" data-param="maxParticles" min="1" max="2000" value="256" step="1">
+                                <input type="number" data-param="maxParticles" id="input-maxParticles" min="1" max="2000" value="256" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-duration">Duration <span class="hint">(0=inf)</span></label>
+                                <input type="range" data-param="duration" min="0" max="30" value="0" step="0.1">
+                                <input type="number" data-param="duration" id="input-duration" min="0" max="30" value="0" step="0.1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-emitterType">Emitter Type</label>
+                                <select data-param="emitterType" id="input-emitterType">
+                                    <option value="0">Gravity (0)</option>
+                                    <option value="1">Radial (1)</option>
+                                </select>
+                            </div>
+                            <div class="param-row">
+                                <label for="input-particleLifespan">Lifespan</label>
+                                <input type="range" data-param="particleLifespan" min="0.01" max="30" value="1" step="0.01">
+                                <input type="number" data-param="particleLifespan" id="input-particleLifespan" min="0.01" max="30" value="1" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-particleLifespanVariance">Lifespan Var</label>
+                                <input type="range" data-param="particleLifespanVariance" min="0" max="15" value="0.5" step="0.01">
+                                <input type="number" data-param="particleLifespanVariance" id="input-particleLifespanVariance" min="0" max="15" value="0.5" step="0.01">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section">
+                        <div class="section-header" data-toggle="emission" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Emission</h3>
+                        </div>
+                        <div class="section-content" id="section-emission">
+                            <div class="param-row">
+                                <label for="input-angle">Angle</label>
+                                <input type="range" data-param="angle" min="-360" max="360" value="-90" step="1">
+                                <input type="number" data-param="angle" id="input-angle" min="-360" max="360" value="-90" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-angleVariance">Angle Var</label>
+                                <input type="range" data-param="angleVariance" min="0" max="360" value="10" step="1">
+                                <input type="number" data-param="angleVariance" id="input-angleVariance" min="0" max="360" value="10" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-speed">Speed</label>
+                                <input type="range" data-param="speed" min="0" max="1000" value="100" step="1">
+                                <input type="number" data-param="speed" id="input-speed" min="0" max="1000" value="100" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-speedVariance">Speed Var</label>
+                                <input type="range" data-param="speedVariance" min="0" max="500" value="30" step="1">
+                                <input type="number" data-param="speedVariance" id="input-speedVariance" min="0" max="500" value="30" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-sourcePositionVariancex">Source Var X</label>
+                                <input type="range" data-param="sourcePositionVariancex" min="0" max="2000" value="0" step="1">
+                                <input type="number" data-param="sourcePositionVariancex" id="input-sourcePositionVariancex" min="0" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-sourcePositionVariancey">Source Var Y</label>
+                                <input type="range" data-param="sourcePositionVariancey" min="0" max="2000" value="0" step="1">
+                                <input type="number" data-param="sourcePositionVariancey" id="input-sourcePositionVariancey" min="0" max="500" value="0" step="1">
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Toggled by emitterType: gravity (0) vs radial (1) -->
+                    <section class="param-section" id="physics-gravity-section">
+                        <div class="section-header" data-toggle="physicsGravity" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Physics (Gravity)</h3>
+                        </div>
+                        <div class="section-content" id="section-physicsGravity">
+                            <div class="param-row">
+                                <label for="input-gravityx">Gravity X</label>
+                                <input type="range" data-param="gravityx" min="-500" max="500" value="0" step="1">
+                                <input type="number" data-param="gravityx" id="input-gravityx" min="-500" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-gravityy">Gravity Y</label>
+                                <input type="range" data-param="gravityy" min="-500" max="500" value="0" step="1">
+                                <input type="number" data-param="gravityy" id="input-gravityy" min="-500" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-radialAcceleration">Radial Accel</label>
+                                <input type="range" data-param="radialAcceleration" min="-500" max="500" value="0" step="1">
+                                <input type="number" data-param="radialAcceleration" id="input-radialAcceleration" min="-500" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-radialAccelVariance">Radial Var</label>
+                                <input type="range" data-param="radialAccelVariance" min="0" max="500" value="0" step="1">
+                                <input type="number" data-param="radialAccelVariance" id="input-radialAccelVariance" min="0" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-tangentialAcceleration">Tangent Accel</label>
+                                <input type="range" data-param="tangentialAcceleration" min="-500" max="500" value="0" step="1">
+                                <input type="number" data-param="tangentialAcceleration" id="input-tangentialAcceleration" min="-500" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-tangentialAccelVariance">Tangent Var</label>
+                                <input type="range" data-param="tangentialAccelVariance" min="0" max="500" value="0" step="1">
+                                <input type="number" data-param="tangentialAccelVariance" id="input-tangentialAccelVariance" min="0" max="500" value="0" step="1">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section" id="physics-radial-section" style="display:none;">
+                        <div class="section-header" data-toggle="physicsRadial" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Physics (Radial)</h3>
+                        </div>
+                        <div class="section-content" id="section-physicsRadial">
+                            <div class="param-row">
+                                <label for="input-maxRadius">Max Radius</label>
+                                <input type="range" data-param="maxRadius" min="0" max="500" value="100" step="1">
+                                <input type="number" data-param="maxRadius" id="input-maxRadius" min="0" max="500" value="100" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-maxRadiusVariance">Max Rad Var</label>
+                                <input type="range" data-param="maxRadiusVariance" min="0" max="250" value="0" step="1">
+                                <input type="number" data-param="maxRadiusVariance" id="input-maxRadiusVariance" min="0" max="250" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-minRadius">Min Radius</label>
+                                <input type="range" data-param="minRadius" min="0" max="500" value="0" step="1">
+                                <input type="number" data-param="minRadius" id="input-minRadius" min="0" max="500" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-minRadiusVariance">Min Rad Var</label>
+                                <input type="range" data-param="minRadiusVariance" min="0" max="250" value="0" step="1">
+                                <input type="number" data-param="minRadiusVariance" id="input-minRadiusVariance" min="0" max="250" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-rotatePerSecond">Rotate/Sec</label>
+                                <input type="range" data-param="rotatePerSecond" min="-360" max="360" value="0" step="1">
+                                <input type="number" data-param="rotatePerSecond" id="input-rotatePerSecond" min="-360" max="360" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-rotatePerSecondVariance">Rotate Var</label>
+                                <input type="range" data-param="rotatePerSecondVariance" min="0" max="360" value="0" step="1">
+                                <input type="number" data-param="rotatePerSecondVariance" id="input-rotatePerSecondVariance" min="0" max="360" value="0" step="1">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section">
+                        <div class="section-header" data-toggle="size" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Size</h3>
+                        </div>
+                        <div class="section-content" id="section-size">
+                            <div class="param-row">
+                                <label for="input-startParticleSize">Start Size</label>
+                                <input type="range" data-param="startParticleSize" min="0" max="500" value="32" step="1">
+                                <input type="number" data-param="startParticleSize" id="input-startParticleSize" min="0" max="500" value="32" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-startParticleSizeVariance">Start Size Var</label>
+                                <input type="range" data-param="startParticleSizeVariance" min="0" max="250" value="0" step="1">
+                                <input type="number" data-param="startParticleSizeVariance" id="input-startParticleSizeVariance" min="0" max="250" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishParticleSize">End Size</label>
+                                <input type="range" data-param="finishParticleSize" min="0" max="500" value="16" step="1">
+                                <input type="number" data-param="finishParticleSize" id="input-finishParticleSize" min="0" max="500" value="16" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishParticleSizeVariance">End Size Var</label>
+                                <input type="range" data-param="finishParticleSizeVariance" min="0" max="250" value="0" step="1">
+                                <input type="number" data-param="finishParticleSizeVariance" id="input-finishParticleSizeVariance" min="0" max="250" value="0" step="1">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section collapsed">
+                        <div class="section-header" data-toggle="rotation" role="button" aria-expanded="false">
+                            <span class="toggle-icon">&#x25B6;</span>
+                            <h3>Rotation</h3>
+                        </div>
+                        <div class="section-content" id="section-rotation" style="display:none;">
+                            <div class="param-row">
+                                <label for="input-rotationStart">Start Rotation</label>
+                                <input type="range" data-param="rotationStart" min="-360" max="360" value="0" step="1">
+                                <input type="number" data-param="rotationStart" id="input-rotationStart" min="-360" max="360" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-rotationStartVariance">Start Rot Var</label>
+                                <input type="range" data-param="rotationStartVariance" min="0" max="360" value="0" step="1">
+                                <input type="number" data-param="rotationStartVariance" id="input-rotationStartVariance" min="0" max="360" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-rotationEnd">End Rotation</label>
+                                <input type="range" data-param="rotationEnd" min="-360" max="360" value="0" step="1">
+                                <input type="number" data-param="rotationEnd" id="input-rotationEnd" min="-360" max="360" value="0" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-rotationEndVariance">End Rot Var</label>
+                                <input type="range" data-param="rotationEndVariance" min="0" max="360" value="0" step="1">
+                                <input type="number" data-param="rotationEndVariance" id="input-rotationEndVariance" min="0" max="360" value="0" step="1">
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section">
+                        <div class="section-header" data-toggle="colorStart" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Color (Start)</h3>
+                        </div>
+                        <div class="section-content" id="section-colorStart">
+                            <div class="color-row">
+                                <input type="color" id="color-start-picker" value="#ff801a" title="Click to pick a color">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-startColorRed">Red</label>
+                                <input type="range" data-param="startColorRed" min="0" max="1" value="1" step="0.01">
+                                <input type="number" data-param="startColorRed" id="input-startColorRed" min="0" max="1" value="1" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-startColorGreen">Green</label>
+                                <input type="range" data-param="startColorGreen" min="0" max="1" value="0.5" step="0.01">
+                                <input type="number" data-param="startColorGreen" id="input-startColorGreen" min="0" max="1" value="0.5" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-startColorBlue">Blue</label>
+                                <input type="range" data-param="startColorBlue" min="0" max="1" value="0.1" step="0.01">
+                                <input type="number" data-param="startColorBlue" id="input-startColorBlue" min="0" max="1" value="0.1" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-startColorAlpha">Alpha</label>
+                                <input type="range" data-param="startColorAlpha" min="0" max="1" value="1" step="0.01">
+                                <input type="number" data-param="startColorAlpha" id="input-startColorAlpha" min="0" max="1" value="1" step="0.01">
+                            </div>
+                            <div class="variance-group">
+                                <label>Variance</label>
+                                <div class="variance-inputs">
+                                    <div class="variance-field">
+                                        <label>R</label>
+                                        <input type="number" data-param="startColorVarianceRed" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>G</label>
+                                        <input type="number" data-param="startColorVarianceGreen" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>B</label>
+                                        <input type="number" data-param="startColorVarianceBlue" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>A</label>
+                                        <input type="number" data-param="startColorVarianceAlpha" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section">
+                        <div class="section-header" data-toggle="colorEnd" role="button" aria-expanded="true">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Color (End)</h3>
+                        </div>
+                        <div class="section-content" id="section-colorEnd">
+                            <div class="color-row">
+                                <input type="color" id="color-end-picker" value="#ff3300" title="Click to pick a color">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishColorRed">Red</label>
+                                <input type="range" data-param="finishColorRed" min="0" max="1" value="1" step="0.01">
+                                <input type="number" data-param="finishColorRed" id="input-finishColorRed" min="0" max="1" value="1" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishColorGreen">Green</label>
+                                <input type="range" data-param="finishColorGreen" min="0" max="1" value="0.2" step="0.01">
+                                <input type="number" data-param="finishColorGreen" id="input-finishColorGreen" min="0" max="1" value="0.2" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishColorBlue">Blue</label>
+                                <input type="range" data-param="finishColorBlue" min="0" max="1" value="0" step="0.01">
+                                <input type="number" data-param="finishColorBlue" id="input-finishColorBlue" min="0" max="1" value="0" step="0.01">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-finishColorAlpha">Alpha</label>
+                                <input type="range" data-param="finishColorAlpha" min="0" max="1" value="0" step="0.01">
+                                <input type="number" data-param="finishColorAlpha" id="input-finishColorAlpha" min="0" max="1" value="0" step="0.01">
+                            </div>
+                            <div class="variance-group">
+                                <label>Variance</label>
+                                <div class="variance-inputs">
+                                    <div class="variance-field">
+                                        <label>R</label>
+                                        <input type="number" data-param="finishColorVarianceRed" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>G</label>
+                                        <input type="number" data-param="finishColorVarianceGreen" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>B</label>
+                                        <input type="number" data-param="finishColorVarianceBlue" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                    <div class="variance-field">
+                                        <label>A</label>
+                                        <input type="number" data-param="finishColorVarianceAlpha" min="0" max="1" value="0" step="0.01">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="param-section collapsed">
+                        <div class="section-header" data-toggle="texture" role="button" aria-expanded="false">
+                            <span class="toggle-icon">&#x25B6;</span>
+                            <h3>Texture</h3>
+                        </div>
+                        <div class="section-content" id="section-texture" style="display:none;">
+                            <div class="texture-preview" id="texture-preview">
+                                <img id="texture-preview-img" src="" alt="Texture preview">
+                            </div>
+                            <div class="param-row">
+                                <label for="texture-preset">Texture</label>
+                                <select id="texture-preset">
+                                </select>
+                            </div>
+                            <div class="texture-actions">
+                                <label class="file-btn">
+                                    Upload
+                                    <input type="file" id="texture-upload" accept="image/png">
+                                </label>
+                                <button id="btn-remove-texture" class="file-btn texture-remove-btn"
+                                        title="Remove uploaded texture" style="display:none;">Remove</button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Values are OpenGL blend function enum constants (e.g. 770 = GL_SRC_ALPHA) -->
+                    <section class="param-section collapsed">
+                        <div class="section-header" data-toggle="blend" role="button" aria-expanded="false">
+                            <span class="toggle-icon">&#x25B6;</span>
+                            <h3>Blend Mode</h3>
+                        </div>
+                        <div class="section-content" id="section-blend" style="display:none;">
+                            <div class="param-row">
+                                <label for="blend-preset">Preset</label>
+                                <select id="blend-preset">
+                                    <option value="additive" selected>Additive</option>
+                                    <option value="normal">Normal</option>
+                                    <option value="multiply">Multiply</option>
+                                    <option value="screen">Screen</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="param-row">
+                                <label for="input-blendFuncSource">Source</label>
+                                <select data-param="blendFuncSource" id="input-blendFuncSource">
+                                    <option value="0">GL_ZERO (0)</option>
+                                    <option value="1">GL_ONE (1)</option>
+                                    <option value="770" selected>GL_SRC_ALPHA (770)</option>
+                                    <option value="771">GL_ONE_MINUS_SRC_ALPHA (771)</option>
+                                    <option value="774">GL_DST_COLOR (774)</option>
+                                    <option value="769">GL_ONE_MINUS_SRC_COLOR (769)</option>
+                                </select>
+                            </div>
+                            <div class="param-row">
+                                <label for="input-blendFuncDestination">Destination</label>
+                                <select data-param="blendFuncDestination" id="input-blendFuncDestination">
+                                    <option value="0">GL_ZERO (0)</option>
+                                    <option value="1" selected>GL_ONE (1)</option>
+                                    <option value="770">GL_SRC_ALPHA (770)</option>
+                                    <option value="771">GL_ONE_MINUS_SRC_ALPHA (771)</option>
+                                    <option value="774">GL_DST_COLOR (774)</option>
+                                    <option value="769">GL_ONE_MINUS_SRC_COLOR (769)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </section>
+
+                </div>
+
+                <div id="image-params-container" style="display:none;">
+                    <section class="param-section">
+                        <div class="section-header">
+                            <span class="toggle-icon">&#x25BC;</span>
+                            <h3>Image Properties</h3>
+                        </div>
+                        <div class="section-content">
+                            <div class="param-row">
+                                <label for="image-switch-select">Image</label>
+                                <select id="image-switch-select" style="flex:1;"></select>
+                            </div>
+                            <div class="param-row">
+                                <label for="input-image-x">Position X</label>
+                                <input type="number" id="input-image-x" data-imgprop="x" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-image-y">Position Y</label>
+                                <input type="number" id="input-image-y" data-imgprop="y" step="1">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-image-scale">Scale</label>
+                                <input type="range" id="input-image-scale-slider" data-imgprop="scale" min="0.1" max="5.0" value="1.0" step="0.05">
+                                <input type="number" id="input-image-scale" data-imgprop="scale" min="0.1" max="5.0" value="1.0" step="0.05">
+                            </div>
+                            <div class="param-row">
+                                <label for="input-image-opacity">Opacity</label>
+                                <input type="range" id="input-image-opacity-slider" data-imgprop="opacity" min="0" max="1.0" value="1.0" step="0.01">
+                                <input type="number" id="input-image-opacity" data-imgprop="opacity" min="0" max="1.0" value="1.0" step="0.01">
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+            </aside>
+
+        </main>
+
+        <div id="toast-container"></div>
+
+        <div id="shortcuts-overlay" class="modal-overlay" style="display:none;">
+            <div class="modal-dialog shortcuts-dialog">
+                <h2>Keyboard Shortcuts</h2>
+                <table class="shortcuts-table">
+                    <tr><td class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+                    <tr><td class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Redo</td></tr>
+                    <tr><td class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Redo (alt)</td></tr>
+                    <tr><td class="shortcut-key"><kbd>Delete</kbd></td><td>Delete selected object</td></tr>
+                    <tr><td class="shortcut-key"><kbd>Escape</kbd></td><td>Close dialogs</td></tr>
+                </table>
+                <button id="btn-close-shortcuts" class="full-btn">Close</button>
+            </div>
+        </div>
+
+        <div id="confirm-clear-overlay" class="modal-overlay" style="display:none;">
+            <div class="modal-dialog confirm-dialog">
+                <h2>Clear all saved data?</h2>
+                <p>This will permanently remove all saved scenes, autosave data, images, and preferences from your browser.</p>
+                <div class="confirm-buttons">
+                    <button id="btn-confirm-clear" class="confirm-btn confirm-btn-danger">Clear all saved data</button>
+                    <button id="btn-cancel-clear" class="confirm-btn confirm-btn-cancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
