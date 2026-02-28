@@ -1,5 +1,11 @@
 {
- "name": "App",
+ "name": "Solar2D Particle Editor",
+ "short_name": "Particle Editor",
+ "description": "A browser-based particle effect editor for Solar2D - create, customize, and export particle emitters with real-time preview, built-in templates, and full scene composition.",
+ "start_url": ".",
+ "display": "standalone",
+ "background_color": "#1a1a1e",
+ "theme_color": "#ffffff",
  "icons": [
   {
    "src": "\/android-icon-36x36.png",
