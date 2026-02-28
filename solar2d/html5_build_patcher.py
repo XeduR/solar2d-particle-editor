@@ -11,7 +11,6 @@ import os
 import sys
 import shutil
 import re
-import msvcrt
 from pathlib import Path
 
 line_length = 60
@@ -159,32 +158,6 @@ def delete_unused_html(bin_dir):
     return len(deleted) > 0
 
 
-def input_with_escape(prompt):
-    """
-    Read user input with Escape key support (Windows).
-    Returns the input string, or None if Escape was pressed.
-    """
-    print(prompt, end='', flush=True)
-    chars = []
-    while True:
-        ch = msvcrt.getwch()
-        if ch == '\x1b':  # Escape
-            print()
-            return None
-        elif ch == '\r':  # Enter
-            print()
-            return ''.join(chars)
-        elif ch == '\x08':  # Backspace
-            if chars:
-                chars.pop()
-                print('\b \b', end='', flush=True)
-        elif ch in ('\x00', '\xe0'):  # Special key prefix (arrows, F-keys, etc.)
-            msvcrt.getwch()  # Consume the second byte
-        else:
-            chars.append(ch)
-            print(ch, end='', flush=True)
-
-
 def clean_path(raw_path):
     """
     Clean up a path string from terminal input.
@@ -284,16 +257,13 @@ def main():
         print("  - Typing or pasting a path to the .bin file or its folder")
         print("  - Dragging and dropping the file or its folder into this window")
         print("  - Pressing Enter to auto-detect the file in the current folder")
-        print("(Press Escape to exit)")
         print()
 
-        user_input = input_with_escape("> ")
-
-        if user_input is None:
-            print("Exiting...")
+        try:
+            user_input = input("> ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting...")
             return
-
-        user_input = user_input.strip()
 
         if user_input:
             bin_path = resolve_bin_path(clean_path(user_input))
