@@ -12,8 +12,9 @@ Desktop.ini
 *.swp
 *.swo
 
-# Node
+# Personal settings and build files
 node_modules/
+.claude/
 
 # Backup files
 *.backup
