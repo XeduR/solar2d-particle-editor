@@ -131,11 +131,6 @@ function M.create( deps )
             emitterManager.restartEmitters()
         end,
 
-        -- Resets zoom to 1x and pan to (0,0)
-        resetView = function()
-            deps.resetViewFn()
-        end,
-
         -- Signals parent page is ready. Triggers sendReady
         parentReady = function()
             deps.sendReady()

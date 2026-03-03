@@ -3,7 +3,7 @@
 ---------------------------------------------------------------------------------
 
 display.setStatusBar( display.HiddenStatusBar )
-display.setDefault( "background", 0.1, 0.1, 0.12 )
+display.setDefault( "background", 0 )
 
 local platform = system.getInfo( "platform" )
 local isHTML5 = ( platform == "html5" )
@@ -85,7 +85,7 @@ local function createBorder()
     end
     borderRect = display.newRect( groupGrid, screen.centerX, screen.centerY, screen.width, screen.height )
     borderRect:setFillColor( 0, 0, 0, 0 )
-    borderRect:setStrokeColor( 0.35, 0.35, 0.4 )
+    borderRect:setStrokeColor( gridColor[1], gridColor[2], gridColor[3] )
     borderRect.strokeWidth = 4
 end
 
@@ -226,7 +226,7 @@ local refreshAllIndicators
 
 createGrid()
 createBorder()
-groupGrid.isVisible = false
+gridGroup.isVisible = false
 groupGrid:toFront()
 
 ---------------------------------------------------------------------------------
@@ -458,42 +458,8 @@ local function dispatchObjectListChanged()
 end
 
 ---------------------------------------------------------------------------------
--- Zoom/Pan State
----------------------------------------------------------------------------------
-
-local viewZoom = 1.0
-local isPanning = false
-local panStartX = 0
-local panStartY = 0
-local panStartGroupX = 0
-local panStartGroupY = 0
-local lastMouseX = screen.centerX
-local lastMouseY = screen.centerY
-
-local MIN_ZOOM = 0.1
-local MAX_ZOOM = 5.0
-local ZOOM_STEP = 1.1  -- multiplicative factor per scroll notch
-
-local function dispatchViewChanged()
-    if not jsBridge then return end
-    jsBridge.dispatchEvent( "viewChanged", {
-        zoom = viewZoom,
-        panX = groupObjects.x,
-        panY = groupObjects.y,
-    } )
-end
-
-local function resetView()
-    viewZoom = 1.0
-    groupObjects.xScale = 1
-    groupObjects.yScale = 1
-    groupObjects.x = 0
-    groupObjects.y = 0
-    dispatchViewChanged()
-end
-
----------------------------------------------------------------------------------
 -- Drag Interaction (emitters only; images have their own touch listeners)
+-- Zoom and pan are handled by CSS on the HTML5 side.
 ---------------------------------------------------------------------------------
 
 local isDragging = false
@@ -543,77 +509,6 @@ end
 touchRect:addEventListener( "touch", onCanvasTouch )
 
 ---------------------------------------------------------------------------------
--- Zoom (scroll wheel) & Pan (right/middle-click drag)
----------------------------------------------------------------------------------
-
-local function onMouseEvent( event )
-    -- Track mouse position from all event types (scroll events may not
-    -- report accurate x/y in HTML5 builds, so we use the last known position).
-    if event.x and event.y then
-        if event.type ~= "scroll" then
-            lastMouseX = event.x
-            lastMouseY = event.y
-        end
-    end
-
-    if event.type == "scroll" then
-        local scrollY = event.scrollY or 0
-        if scrollY == 0 then return end
-
-        local oldZoom = viewZoom
-        local newZoom
-
-        if scrollY > 0 then
-            newZoom = oldZoom * ZOOM_STEP
-        else
-            newZoom = oldZoom / ZOOM_STEP
-        end
-
-        if newZoom < MIN_ZOOM then newZoom = MIN_ZOOM end
-        if newZoom > MAX_ZOOM then newZoom = MAX_ZOOM end
-        if newZoom == oldZoom then return end
-
-        -- Zoom toward last known cursor position
-        local mouseX = lastMouseX
-        local mouseY = lastMouseY
-        local scale = newZoom / oldZoom
-
-        groupObjects.x = mouseX - ( mouseX - groupObjects.x ) * scale
-        groupObjects.y = mouseY - ( mouseY - groupObjects.y ) * scale
-        groupObjects.xScale = newZoom
-        groupObjects.yScale = newZoom
-
-        viewZoom = newZoom
-        dispatchViewChanged()
-
-    elseif event.isSecondaryButtonDown or event.isMiddleButtonDown then
-        if event.type == "down" then
-            isPanning = true
-            panStartX = event.x
-            panStartY = event.y
-            panStartGroupX = groupObjects.x
-            panStartGroupY = groupObjects.y
-
-        elseif event.type == "drag" and isPanning then
-            groupObjects.x = panStartGroupX + ( event.x - panStartX )
-            groupObjects.y = panStartGroupY + ( event.y - panStartY )
-
-        elseif event.type == "up" and isPanning then
-            isPanning = false
-            dispatchViewChanged()
-        end
-
-    elseif event.type == "up" then
-        if isPanning then
-            isPanning = false
-            dispatchViewChanged()
-        end
-    end
-end
-
-Runtime:addEventListener( "mouse", onMouseEvent )
-
----------------------------------------------------------------------------------
 -- Platform Warning
 ---------------------------------------------------------------------------------
 
@@ -655,16 +550,6 @@ end )
 -- Set to true by JS bridge "skipDefaultEmitter" call when restoring a saved session
 local skipDefaultEmitter = false
 
-if not skipDefaultEmitter then
-    local defaultEmitter = emitterManager.createEmitter( templates.getDefault(), "Fire" )
-    emitterManager.selectEmitter( defaultEmitter.id )
-    selectedObjectId = defaultEmitter.id
-    selectedObjectType = "emitter"
-    addToObjectOrder( defaultEmitter.id, "emitter" )
-    refreshIndicator( defaultEmitter.id, nil )
-    history.push( getFullState(), "Initial state" )
-end
-
 
 ---------------------------------------------------------------------------------
 -- JS Bridge Handler Registration
@@ -676,6 +561,17 @@ if jsBridge then
     local function sendReady()
         if readySent then return end
         readySent = true
+
+        if not skipDefaultEmitter then
+            local defaultEmitter = emitterManager.createEmitter( templates.getDefault(), "Fire" )
+            emitterManager.selectEmitter( defaultEmitter.id )
+            selectedObjectId = defaultEmitter.id
+            selectedObjectType = "emitter"
+            addToObjectOrder( defaultEmitter.id, "emitter" )
+            refreshIndicator( defaultEmitter.id, nil )
+            history.push( getFullState(), "Initial state" )
+        end
+
         jsBridge.dispatchEvent( "ready", {
             objects = getObjectList(),
             templates = templates.getList(),
@@ -727,7 +623,7 @@ if jsBridge then
             createGrid( size )
         end,
         setGridEnabled = function( enabled )
-            groupGrid.isVisible = enabled
+            gridGroup.isVisible = enabled
         end,
         setEmitterBoundsMode = function( mode )
             emitterBoundsMode = mode
@@ -739,6 +635,9 @@ if jsBridge then
             gridColor[2] = g
             gridColor[3] = b
             createGrid()
+            if borderRect then
+                borderRect:setStrokeColor( r, g, b )
+            end
         end,
         setBoundsColor = function( r, g, b )
             boundsColor[1] = r
@@ -746,7 +645,6 @@ if jsBridge then
             boundsColor[3] = b
             refreshAllIndicators()
         end,
-        resetViewFn = resetView,
         getCanvasGroup = function() return groupObjects end,
     }
 

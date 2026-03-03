@@ -765,6 +765,50 @@ local templates = {
             textureFileName = "assets/particles/basic_circle_01.png",
         },
     },
+
+    -- Slow drifting clouds moving horizontally. Large soft particles with
+    -- wide source variance for natural sky coverage. Normal blending.
+    clouds = {
+        name = "Clouds",
+        description = "Slow drifting clouds across the sky",
+        params = {
+            emitterType = 0,
+            maxParticles = 30,
+            angle = 180,                    -- Moving left
+            angleVariance = 10,
+            speed = 12,                     -- Very slow drift
+            speedVariance = 5,
+            sourcePositionVariancex = 300,  -- Wide horizontal spread
+            sourcePositionVariancey = 30,
+            particleLifespan = 10,
+            particleLifespanVariance = 3,
+            startParticleSize = 60,         -- Large soft cloud puffs
+            startParticleSizeVariance = 20,
+            finishParticleSize = 120,       -- Grow as they drift
+            finishParticleSizeVariance = 30,
+            startColorRed = 1,
+            startColorGreen = 1,
+            startColorBlue = 1,
+            startColorAlpha = 0.3,
+            startColorVarianceRed = 0,
+            startColorVarianceGreen = 0,
+            startColorVarianceBlue = 0,
+            startColorVarianceAlpha = 0.1,
+            finishColorRed = 0.95,
+            finishColorGreen = 0.95,
+            finishColorBlue = 0.95,
+            finishColorAlpha = 0,
+            finishColorVarianceRed = 0,
+            finishColorVarianceGreen = 0,
+            finishColorVarianceBlue = 0,
+            finishColorVarianceAlpha = 0,
+            gravityx = -2,                  -- Very gentle leftward drift
+            gravityy = 0,
+            blendFuncSource = 770,          -- GL_SRC_ALPHA
+            blendFuncDestination = 771,     -- GL_ONE_MINUS_SRC_ALPHA (normal blend)
+            textureFileName = "assets/particles/basic_circle_02.png",
+        },
+    },
 }
 
 local templateOrder = {
@@ -776,6 +820,7 @@ local templateOrder = {
     -- Weather
     "rain",
     "snow",
+    "clouds",
     "glimmer",
     -- Nature
     "bubbles",

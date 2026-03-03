@@ -298,8 +298,7 @@
             case "callLuaResponse":
                 onCallLuaResponse( data );
                 break;
-            case "viewChanged":
-                onViewChanged( data );
+            case "panChanged":
                 break;
         }
     } );
@@ -313,8 +312,6 @@
      * @param {Object} data - Contains objects, templates, canUndo, canRedo.
      */
     function onReady( data ) {
-        hideIframeLoading();
-
         state.objects = data.objects || data.emitters || [];
         state.templates = data.templates || [];
         state.canUndo = data.canUndo || false;
@@ -337,8 +334,16 @@
         updateExportState();
         updateTemplateState();
         setupAutoSave();
-        applyPendingRestore();
         restoreBackgroundToLua();
+
+        var restorePromise = applyPendingRestore();
+        if ( restorePromise ) {
+            restorePromise.then( function() {
+                hideIframeLoading();
+            } );
+        } else {
+            hideIframeLoading();
+        }
 
         // Apply saved guide settings to Lua
         var savedGrid = localStorage.getItem( "grid-visible" );
@@ -713,6 +718,7 @@
         setupShortcutsOverlay();
         setupResetPosition();
         setupResetView();
+        setupCssZoom();
         setupExport();
         setupTextureUpload();
         setupUIScale();
@@ -1931,20 +1937,196 @@
         } );
     }
 
-    /** Updates zoom level display when view changes in Solar2D. */
-    function onViewChanged( data ) {
+    // ---- CSS Zoom & Pan State ----
+    var cssZoom = 1.0;
+    var cssTx = 0;
+    var cssTy = 0;
+    var CSS_MIN_ZOOM = 0.1;
+    var CSS_MAX_ZOOM = 5.0;
+
+    var isPanning = false;
+    var panStartScreenX = 0;
+    var panStartScreenY = 0;
+    var panStartTx = 0;
+    var panStartTy = 0;
+
+    function applyCssZoom() {
+        var iframe = document.getElementById( "solar2d-iframe" );
+        if ( !iframe ) return;
+        iframe.style.transform = "translate(" + cssTx + "px, " + cssTy + "px) scale(" + cssZoom + ")";
         var el = document.getElementById( "zoom-level" );
         if ( el ) {
-            el.textContent = Math.round( ( data.zoom || 1 ) * 100 ) + "%";
+            el.textContent = Math.round( cssZoom * 100 ) + "%";
         }
     }
 
-    /** Sets up the reset view button click handler. */
+    function handleZoomWheel( e, fromIframe ) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        var dy = e.deltaY;
+        if ( dy === 0 ) return;
+
+        // Normalize: deltaMode 1 = lines (~40px each), 2 = pages (~800px each)
+        if ( e.deltaMode === 1 ) dy *= 40;
+        else if ( e.deltaMode === 2 ) dy *= 800;
+
+        // Continuous zoom factor — smooth for trackpads, reasonable for mouse wheels
+        var oldZoom = cssZoom;
+        var newZoom = oldZoom * Math.exp( -dy * 0.002 );
+
+        newZoom = Math.max( CSS_MIN_ZOOM, Math.min( CSS_MAX_ZOOM, newZoom ) );
+        if ( newZoom === oldZoom ) return;
+
+        // Compute cursor position in iframe-local (unscaled) coords
+        var localX, localY;
+        if ( fromIframe ) {
+            // Iframe events already use iframe-local coordinates
+            localX = e.clientX;
+            localY = e.clientY;
+        } else {
+            // Parent events: convert viewport coords to iframe-local via bounding rect
+            var iframeRect = document.getElementById( "solar2d-iframe" ).getBoundingClientRect();
+            localX = ( e.clientX - iframeRect.left ) / oldZoom;
+            localY = ( e.clientY - iframeRect.top ) / oldZoom;
+        }
+
+        // Adjust translation so the point under the cursor stays fixed
+        cssTx += localX * ( oldZoom - newZoom );
+        cssTy += localY * ( oldZoom - newZoom );
+
+        cssZoom = newZoom;
+        applyCssZoom();
+    }
+
+    function startPan( e ) {
+        isPanning = true;
+        panStartScreenX = e.screenX;
+        panStartScreenY = e.screenY;
+        panStartTx = cssTx;
+        panStartTy = cssTy;
+    }
+
+    function updatePan( e ) {
+        if ( !isPanning ) return;
+        cssTx = panStartTx + ( e.screenX - panStartScreenX );
+        cssTy = panStartTy + ( e.screenY - panStartScreenY );
+        applyCssZoom();
+    }
+
+    function stopPan() {
+        isPanning = false;
+    }
+
+    function setupCssZoom() {
+        var iframe = document.getElementById( "solar2d-iframe" );
+        if ( !iframe ) return;
+
+        var container = document.getElementById( "canvas-container" );
+        if ( container ) {
+            container.addEventListener( "wheel", function( e ) {
+                handleZoomWheel( e, false );
+            }, { passive: false } );
+
+            container.addEventListener( "contextmenu", function( e ) {
+                e.preventDefault();
+            } );
+
+            container.addEventListener( "pointerdown", function( e ) {
+                if ( e.button === 2 || e.button === 1 ) {
+                    e.preventDefault();
+                    startPan( e );
+                }
+            } );
+        }
+
+        // Set up iframe-level listeners once the iframe content loads.
+        iframe.addEventListener( "load", function() {
+            var iframeDoc;
+            try { iframeDoc = iframe.contentDocument || iframe.contentWindow.document; }
+            catch ( e ) { return; }
+
+            // Zoom: intercept wheel in capture phase before Emscripten
+            iframeDoc.addEventListener( "wheel", function( e ) {
+                e.stopPropagation();
+                handleZoomWheel( e, true );
+            }, { passive: false, capture: true } );
+
+            // Block context menu inside iframe
+            iframeDoc.addEventListener( "contextmenu", function( e ) {
+                e.preventDefault();
+            } );
+
+            // Pan: intercept right/middle-click in capture phase before Emscripten
+            iframeDoc.addEventListener( "pointerdown", function( e ) {
+                if ( e.button === 2 || e.button === 1 ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    startPan( e );
+                }
+            }, true );
+
+            // Track pan movement inside iframe (events here don't reach parent document)
+            iframeDoc.addEventListener( "pointermove", function( e ) {
+                if ( !isPanning ) return;
+                e.preventDefault();
+                e.stopPropagation();
+                updatePan( e );
+            }, true );
+
+            // Stop pan inside iframe
+            iframeDoc.addEventListener( "pointerup", function( e ) {
+                if ( isPanning ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    stopPan();
+                }
+            }, true );
+
+            // Block mouse compatibility events for right/middle clicks.
+            // Emscripten uses mousedown/mouseup/mousemove (not pointer events),
+            // so these must be blocked explicitly — preventDefault on pointerdown
+            // should suppress mousedown per spec, but browsers are inconsistent.
+            iframeDoc.addEventListener( "mousedown", function( e ) {
+                if ( e.button === 2 || e.button === 1 ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, true );
+
+            iframeDoc.addEventListener( "mouseup", function( e ) {
+                if ( e.button === 2 || e.button === 1 ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, true );
+
+            iframeDoc.addEventListener( "mousemove", function( e ) {
+                if ( isPanning ) {
+                    e.stopPropagation();
+                }
+            }, true );
+        } );
+
+        // Parent document listeners: handle pan when cursor leaves the iframe
+        document.addEventListener( "pointermove", function( e ) {
+            updatePan( e );
+        } );
+
+        document.addEventListener( "pointerup", function() {
+            stopPan();
+        } );
+    }
+
+    /** Sets up the reset view button: resets CSS zoom and pan. */
     function setupResetView() {
         var btn = document.getElementById( "btn-reset-view" );
         if ( !btn ) return;
         btn.addEventListener( "click", function() {
-            callLua( "resetView" );
+            cssZoom = 1.0;
+            cssTx = 0;
+            cssTy = 0;
+            applyCssZoom();
         } );
     }
 
@@ -2482,6 +2664,8 @@
         iframe.classList.add( "fixed-size" );
         iframe.style.width = w + "px";
         iframe.style.height = h + "px";
+        iframe.style.marginLeft = ( -w / 2 ) + "px";
+        iframe.style.marginTop = ( -h / 2 ) + "px";
     }
 
     // =========================================================================
@@ -2604,6 +2788,7 @@
         { key: "snow", url: "solar2d/src/assets/scenes/snow.json" },
         { key: "detective", url: "solar2d/src/assets/scenes/detective.json" },
         { key: "scifi", url: "solar2d/src/assets/scenes/scifi.json" },
+        { key: "town", url: "solar2d/src/assets/scenes/town.json" },
     ];
 
     /** Loads all scene preset JSON files and populates SCENE_PRESETS. */
@@ -3184,6 +3369,9 @@
                 state._pendingRestore = saveData;
                 if ( saveData.backgroundColor ) {
                     localStorage.setItem( "bg-color", saveData.backgroundColor );
+                    var rgb = hexToRgb( saveData.backgroundColor );
+                    callLua( "setBackgroundColor", rgb.r, rgb.g, rgb.b );
+                    applyBackgroundColor( saveData.backgroundColor );
                 }
             } else {
                 localStorage.removeItem( STORAGE_KEY );
@@ -3195,7 +3383,7 @@
 
     /** Applies the pending restore data (if any) by clearing objects and loading the saved scene. */
     function applyPendingRestore() {
-        if ( !state._pendingRestore ) return;
+        if ( !state._pendingRestore ) return null;
 
         var restoreData = state._pendingRestore;
         state._pendingRestore = null;
@@ -3222,7 +3410,7 @@
         }
 
         var totalCount = sceneConfig.objects ? sceneConfig.objects.length : ( sceneConfig.emitters.length + sceneConfig.images.length );
-        loadSceneObjects( sceneConfig ).then( function() {
+        return loadSceneObjects( sceneConfig ).then( function() {
             showToast( "Session restored (" + totalCount + " object" + ( totalCount !== 1 ? "s" : "" ) + ")" );
         } );
     }
