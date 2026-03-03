@@ -3215,6 +3215,7 @@
         function startAutosave() {
             if ( _autosaveIntervalId ) return;
             _autosaveIntervalId = setInterval( function() {
+                if ( document.hidden ) return;
                 if ( state.objects.length === 0 ) return;
 
                 callLuaAsync( "getSceneData" ).then( function( data ) {
@@ -3249,6 +3250,17 @@
         if ( enabled ) {
             startAutosave();
         }
+
+        // Pause autosave when the tab is hidden to prevent queued calls from
+        // piling up and flooding the Lua bridge when the tab becomes active.
+        document.addEventListener( "visibilitychange", function() {
+            var isEnabled = localStorage.getItem( "autosave-enabled" ) !== "false";
+            if ( document.hidden ) {
+                stopAutosave();
+            } else if ( isEnabled ) {
+                startAutosave();
+            }
+        } );
 
         if ( toggle ) {
             toggle.addEventListener( "change", function() {

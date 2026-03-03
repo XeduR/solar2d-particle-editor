@@ -14,8 +14,8 @@
         {
             "type": "emitter",
             "name": "Water Fountain",
-            "x": 164,
-            "y": 220,
+            "x": 214,
+            "y": 270,
             "params": {
                 "emitterType": 0,
                 "maxParticles": 250,
@@ -73,8 +73,8 @@
         {
             "type": "emitter",
             "name": "Clouds",
-            "x": 260,
-            "y": 60,
+            "x": 340,
+            "y": 30,
             "params": {
                 "emitterType": 0,
                 "maxParticles": 30,
