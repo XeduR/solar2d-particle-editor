@@ -1752,6 +1752,16 @@
         if ( radialSection ) {
             radialSection.style.display = ( emitterType === 1 ) ? "block" : "none";
         }
+
+        var gravityRows = document.querySelectorAll( "[data-emitter-mode='gravity']" );
+        gravityRows.forEach( function( row ) {
+            row.style.display = ( emitterType === 0 ) ? "" : "none";
+        } );
+
+        var radialRows = document.querySelectorAll( "[data-emitter-mode='radial']" );
+        radialRows.forEach( function( row ) {
+            row.style.display = ( emitterType === 1 ) ? "" : "none";
+        } );
     }
 
     /**
