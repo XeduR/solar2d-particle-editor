@@ -234,8 +234,21 @@ groupGrid:toFront()
 ---------------------------------------------------------------------------------
 
 local objectOrder = {}     -- Array of { id = "emitter_1", type = "emitter" } or { id = "image_1", type = "image" }
+local lockedObjects = {}   -- Keyed by object ID; true = movement locked on canvas
 local selectedObjectId = nil
 local selectedObjectType = nil  -- "emitter" or "image"
+
+local function isObjectLocked( id )
+    return lockedObjects[id] == true
+end
+
+local function setObjectLocked( id, locked )
+    if locked then
+        lockedObjects[id] = true
+    else
+        lockedObjects[id] = nil
+    end
+end
 
 -- Lookup for params that affect the indicator visualization
 local indicatorParamKeys = {
@@ -360,6 +373,7 @@ local function getObjectList()
                     type = "emitter",
                     name = name,
                     selected = ( entry.id == selectedObjectId ),
+                    locked = isObjectLocked( entry.id ) or nil,
                 }
             end
         else
@@ -370,6 +384,7 @@ local function getObjectList()
                     type = "image",
                     name = name,
                     selected = ( entry.id == selectedObjectId ),
+                    locked = isObjectLocked( entry.id ) or nil,
                 }
             end
         end
@@ -382,6 +397,7 @@ local function getFullState()
         emitterState = emitterManager.getState(),
         imageState = imageManager.getState(),
         objectOrder = deepCopy( objectOrder ),
+        lockedObjects = deepCopy( lockedObjects ),
         selectedId = selectedObjectId,
         selectedType = selectedObjectType,
     }
@@ -393,6 +409,7 @@ local function restoreFullState( state )
         imageManager.restoreState( state.imageState )
     end
     objectOrder = deepCopy( state.objectOrder or {} )
+    lockedObjects = deepCopy( state.lockedObjects or {} )
     selectedObjectId = state.selectedId
     selectedObjectType = state.selectedType
 
@@ -478,6 +495,7 @@ touchRect.isHitTestable = true
 local function onCanvasTouch( event )
     -- Only drag emitters via the background touch rect
     if selectedObjectType ~= "emitter" then return false end
+    if isObjectLocked( selectedObjectId ) then return false end
 
     if event.phase == "began" then
         isDragging = true
@@ -537,6 +555,8 @@ end
 emitterManager.init( groupObjects )
 imageManager.init( groupObjects, jsBridge )
 history.init()
+
+imageManager.setLockedCheck( isObjectLocked )
 
 imageManager.setOnImageTouched( function( id )
     if selectedObjectId ~= id then
@@ -605,6 +625,8 @@ if jsBridge then
         dispatchObjectListChanged = dispatchObjectListChanged,
         dispatchObjectSelected = dispatchObjectSelected,
         reorderObject = reorderObject,
+        isObjectLocked = isObjectLocked,
+        setObjectLocked = setObjectLocked,
         sendReady = sendReady,
 
         -- State accessors (closures over main.lua's local variables)
@@ -652,12 +674,14 @@ if jsBridge then
     local imageH = require( "classes.handlers.imageHandlers" ).create( deps )
     local sceneH = require( "classes.handlers.sceneHandlers" ).create( deps )
     local viewH = require( "classes.handlers.viewHandlers" ).create( deps )
+    local storageH = require( "classes.handlers.storageHandlers" ).create( deps )
 
     local allHandlers = {}
     for k, v in pairs( emitterH ) do allHandlers[k] = v end
     for k, v in pairs( imageH ) do allHandlers[k] = v end
     for k, v in pairs( sceneH ) do allHandlers[k] = v end
     for k, v in pairs( viewH ) do allHandlers[k] = v end
+    for k, v in pairs( storageH ) do allHandlers[k] = v end
 
     jsBridge.init( allHandlers )
 

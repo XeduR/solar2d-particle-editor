@@ -17,6 +17,7 @@ jsBridgeHost = {
 };
 
 window.addEventListener( "message", function( event ) {
+    if ( event.origin !== window.location.origin ) return;
     if ( event.data && event.data.type === "callLua" ) {
         jsBridgeHost._queue.push( {
             id: event.data.id || null,

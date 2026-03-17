@@ -15,6 +15,7 @@ local imageOrder = {}     -- ordered list of image IDs (determines display/list 
 local activeImageId = nil
 local idCounter = 0
 local onImageTouched = nil
+local isLockedFn = nil
 local tempFileCounter = 0
 
 local function generateId()
@@ -73,6 +74,7 @@ local function addTouchListener( id )
 
     data.displayObj:addEventListener( "touch", function( event )
         if event.phase == "began" then
+            if isLockedFn and isLockedFn( id ) then return false end
             isDragging = true
             local localX, localY = canvasGroup:contentToLocal( event.x, event.y )
             dragOffsetX = localX - data.displayObj.x
@@ -122,6 +124,10 @@ end
 
 function M.setOnImageTouched( callback )
     onImageTouched = callback
+end
+
+function M.setLockedCheck( fn )
+    isLockedFn = fn
 end
 
 function M.createImage( base64Data, filename, name, width, height )

@@ -53,6 +53,13 @@ function M.create( deps )
             end
         end,
 
+        -- Locks or unlocks an object to prevent canvas movement
+        setObjectLocked = function( id, locked )
+            deps.setObjectLocked( id, locked == true or locked == "true" )
+            history.push( deps.getFullState(), "Toggle lock" )
+            deps.dispatchObjectListChanged()
+        end,
+
         -- Returns combined list of all objects in scene order
         getObjectList = function()
             return deps.getObjectList()
@@ -68,12 +75,18 @@ function M.create( deps )
                     local exported = emitterManager.exportEmitter( entry.id, true )
                     if exported then
                         exported.type = "emitter"
+                        if deps.isObjectLocked( entry.id ) then
+                            exported.locked = true
+                        end
                         objects[#objects + 1] = exported
                     end
                 elseif entry.type == "image" then
                     local imgData = deps.imageManager.exportImage( entry.id )
                     if imgData then
                         imgData.type = "image"
+                        if deps.isObjectLocked( entry.id ) then
+                            imgData.locked = true
+                        end
                         objects[#objects + 1] = imgData
                     end
                 end

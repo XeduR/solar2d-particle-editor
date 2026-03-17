@@ -17,6 +17,7 @@
         currentImageProps: {},
         _loadTimeout: null,
         uploadedTextures: {},
+        savedScenes: [],
         particlePresets: [],
         backgroundPresets: [],
     };
@@ -107,6 +108,8 @@
     var SCENES_STORAGE_KEY = "solar2d-particle-editor-scenes";
     var UPLOADED_IMAGES_KEY = "solar2d-particle-editor-uploaded-images";
     var AUTOSAVE_INTERVAL = 15000; // 15 seconds
+    var DEMO_SCENE_KEY = "fantasy";
+    var DEMO_LOADED_KEY = "solar2d-particle-editor-demo-loaded";
 
 
     var _suppressClampToast = false;
@@ -188,11 +191,41 @@
             method: method,
             args: args,
             id: null,
-        }, "*" );
+        }, window.location.origin );
     }
 
     let _nextCallId = 0;
     const _pendingCallbacks = {};
+
+    // RAF gate for coalescing slider preview messages to ~60/sec
+    let _previewRafId = null;
+    let _pendingPreview = null;
+
+    /** Schedules a preview callLua to fire on the next animation frame. */
+    function schedulePreview( method, args ) {
+        _pendingPreview = { method: method, args: args };
+        if ( !_previewRafId ) {
+            _previewRafId = requestAnimationFrame( function() {
+                _previewRafId = null;
+                if ( _pendingPreview ) {
+                    callLua.apply( null, [_pendingPreview.method].concat( _pendingPreview.args ) );
+                    _pendingPreview = null;
+                }
+            } );
+        }
+    }
+
+    /** Flushes any pending preview immediately (call before commitParams). */
+    function flushPreview() {
+        if ( _previewRafId ) {
+            cancelAnimationFrame( _previewRafId );
+            _previewRafId = null;
+        }
+        if ( _pendingPreview ) {
+            callLua.apply( null, [_pendingPreview.method].concat( _pendingPreview.args ) );
+            _pendingPreview = null;
+        }
+    }
 
     /**
      * Promise-based: sends a command and resolves with the Lua return value.
@@ -233,7 +266,7 @@
                 method: method,
                 args: args,
                 id: id,
-            }, "*" );
+            }, window.location.origin );
 
             setTimeout( function() {
                 if ( !settled ) {
@@ -295,6 +328,9 @@
             case "imagePropertyChanged":
                 onImagePropertyChanged( data );
                 break;
+            case "sceneRestored":
+                onSceneRestored( data );
+                break;
             case "callLuaResponse":
                 onCallLuaResponse( data );
                 break;
@@ -336,14 +372,22 @@
         setupAutoSave();
         restoreBackgroundToLua();
 
-        var restorePromise = applyPendingRestore();
-        if ( restorePromise ) {
-            restorePromise.then( function() {
-                hideIframeLoading();
-            } );
-        } else {
-            hideIframeLoading();
-        }
+        migrateOldStorage().then( function() {
+            var restorePromise = applyPendingRestore();
+            if ( restorePromise ) {
+                // onSceneRestored will call hideIframeLoading
+            } else {
+                callLuaAsync( "hasAutosave" ).then( function( info ) {
+                    if ( ( !info || !info.exists ) && !localStorage.getItem( DEMO_LOADED_KEY ) ) {
+                        loadFirstVisitDemo();
+                    } else {
+                        hideIframeLoading();
+                    }
+                } );
+            }
+            refreshSceneList();
+            refreshTextureList();
+        } );
 
         // Apply saved guide settings to Lua
         var savedGrid = localStorage.getItem( "grid-visible" );
@@ -412,6 +456,7 @@
         updateExportHeader();
         updateExportState();
         updateTemplateState();
+        updateParticleCount();
     }
 
     /**
@@ -459,12 +504,32 @@
         }
         updateExportState();
         updateTemplateState();
+        updateParticleCount();
     }
 
     /**
      * Updates image property inputs when an image property changes in Solar2D.
      * @param {Object} data - Contains id, x, y, scale, opacity.
      */
+    function onSceneRestored( data ) {
+        state.objects = data.objects || [];
+        state.selectedObjectId = data.selectedId || null;
+        state.selectedObjectType = data.selectedType || null;
+        state.canUndo = data.canUndo || false;
+        state.canRedo = data.canRedo || false;
+        renderObjectList( state.objects );
+        updateUndoRedoButtons();
+        updateExportState();
+        if ( data.backgroundColor ) {
+            applyBackgroundColor( data.backgroundColor );
+            localStorage.setItem( "bg-color", data.backgroundColor );
+        }
+        if ( data.selectedId ) {
+            callLua( "selectObject", data.selectedId, data.selectedType );
+        }
+        hideIframeLoading();
+    }
+
     function onImagePropertyChanged( data ) {
         if ( data.id === state.selectedObjectId && state.selectedObjectType === TYPE_IMAGE ) {
             state.currentImageProps = data;
@@ -509,10 +574,11 @@
                     var value = parseFloat( input.value );
                     syncImagePairedInput( input, value );
                     if ( state.selectedObjectId && state.selectedObjectType === TYPE_IMAGE ) {
-                        callLua( "setImagePropertyPreview", state.selectedObjectId, key, value );
+                        schedulePreview( "setImagePropertyPreview", [state.selectedObjectId, key, value] );
                     }
                 } );
                 input.addEventListener( "change", function() {
+                    flushPreview();
                     if ( state.selectedObjectId && state.selectedObjectType === TYPE_IMAGE ) {
                         callLua( "commitParams" );
                     }
@@ -582,7 +648,7 @@
             select.appendChild( optgroup );
         }
 
-        // Previously uploaded images from localStorage manifest
+        // Previously uploaded images from IDBFS manifest
         var uploaded = getUploadedImagesManifest();
         if ( uploaded.length > 0 ) {
             var uploadedGroup = document.createElement( "optgroup" );
@@ -678,20 +744,23 @@
                 var manifest = getUploadedImagesManifest();
                 var entry = manifest.find( function( e ) { return e.file === uploadedFile; } );
                 if ( entry ) {
-                    var uImg = new Image();
-                    uImg.onload = function() {
-                        ensurePngDataUrl( entry.dataUrl, function( pngDataUrl ) {
-                            callLua( "replaceImage",
-                                state.selectedObjectId,
-                                pngDataUrl,
-                                entry.file,
-                                entry.label,
-                                uImg.naturalWidth,
-                                uImg.naturalHeight
-                            );
-                        } );
-                    };
-                    uImg.src = entry.dataUrl;
+                    getUploadedTextureDataUrl( uploadedFile, function( dataUrl ) {
+                        if ( !dataUrl ) return;
+                        var uImg = new Image();
+                        uImg.onload = function() {
+                            ensurePngDataUrl( dataUrl, function( pngDataUrl ) {
+                                callLua( "replaceImage",
+                                    state.selectedObjectId,
+                                    pngDataUrl,
+                                    entry.file,
+                                    entry.label,
+                                    uImg.naturalWidth,
+                                    uImg.naturalHeight
+                                );
+                            } );
+                        };
+                        uImg.src = dataUrl;
+                    } );
                 }
                 select.value = "";
             }
@@ -703,13 +772,35 @@
     // =========================================================================
 
     /**
+     * Adds PARAM_RANGES desc strings as title tooltips on parameter labels.
+     */
+    function setupParameterTooltips() {
+        var containers = document.querySelectorAll( ".param-row, .variance-field, .color-compact-field, .color-slider-row" );
+        containers.forEach( function( container ) {
+            var paramInput = container.querySelector( "[data-param]" );
+            if ( !paramInput ) return;
+
+            var paramName = paramInput.getAttribute( "data-param" );
+            var range = PARAM_RANGES[paramName];
+            if ( !range || !range.desc ) return;
+
+            var label = container.querySelector( "label" );
+            if ( label ) {
+                label.title = range.desc;
+            }
+        } );
+    }
+
+    /**
      * Main initialization function; sets up all UI event listeners and initial state.
      */
     function initUI() {
         setupSectionToggles();
+        setupParamSearch();
         setupAddEmitter();
         setupTemplateLoad();
         setupParameterInputs();
+        setupParameterTooltips();
         setupColorPickers();
         setupEmitterTypeListener();
         setupBlendPresets();
@@ -730,7 +821,9 @@
         setupBackgroundColor();
         setupGuides();
         setupContentArea();
+        setupCanvasSettings();
         setupPlaybackControls();
+        setupObjectListEvents();
         setupDragAndDrop();
         setupAddImage();
         setupImagePropertyInputs();
@@ -739,6 +832,10 @@
         setupClearScene();
         setupClearStorage();
         setupIframeLoading();
+        setupViewportBanner();
+        setupPanelToggles();
+        setupToolbarLayout();
+        setupToolbarToggle();
         checkAutoRestore();
         fetchAssetManifests();
     }
@@ -766,6 +863,296 @@
             .catch( function( err ) {
                 console.warn( "Failed to load background manifest:", err );
             } );
+    }
+
+    function setupViewportBanner() {
+        var banner = document.getElementById( "small-viewport-banner" );
+        var btn = document.getElementById( "dismiss-viewport-banner" );
+        if ( !banner || !btn ) return;
+
+        if ( localStorage.getItem( "viewport-banner-dismissed" ) ) {
+            banner.classList.add( "dismissed" );
+        }
+
+        btn.addEventListener( "click", function() {
+            banner.classList.add( "dismissed" );
+            localStorage.setItem( "viewport-banner-dismissed", "1" );
+        } );
+    }
+
+    // =========================================================================
+    // RESPONSIVE BREAKPOINTS
+    // Stages (wide → narrow): full → compact → mobile → minimal
+    //   full:    Toolbar inline on top row, scale slider visible
+    //   compact: Toolbar on separate row (JS-driven, ResizeObserver)
+    //   mobile:  Hamburger menu, overlay sidebars, scale locked to 100% & hidden
+    //   minimal: Emitter docs hidden, reduced header height
+    // =========================================================================
+
+    var BP_MOBILE = window.matchMedia( "(max-width: 640px)" );
+    var BP_MINIMAL = window.matchMedia( "(max-width: 480px)" );
+
+    // =========================================================================
+    // PANEL TOGGLES
+    // =========================================================================
+
+    /**
+     * Panel state logic:
+     * - "desktop state" (sessionStorage) tracks what the user chose while in desktop mode
+     * - In mobile mode, panels auto-close. Toggling in mobile is temporary (not saved).
+     * - Switching to desktop restores the desktop state.
+     * - Switching to mobile always collapses both panels.
+     */
+    function setupPanelToggles() {
+        var leftPanel = document.getElementById( "sidebar-left" );
+        var rightPanel = document.getElementById( "sidebar-right" );
+        var btnLeft = document.getElementById( "btn-toggle-left" );
+        var btnRight = document.getElementById( "btn-toggle-right" );
+        var backdrop = document.getElementById( "panel-backdrop" );
+        if ( !leftPanel || !rightPanel || !btnLeft || !btnRight ) return;
+
+        function isNarrow() {
+            return BP_MOBILE.matches;
+        }
+
+        // Desktop state: "open" (default) or "closed"
+        function getDesktopState( side ) {
+            return sessionStorage.getItem( "panel-" + side + "-desktop" ) || "open";
+        }
+
+        function setDesktopState( side, value ) {
+            sessionStorage.setItem( "panel-" + side + "-desktop", value );
+        }
+
+        function setCollapsed( panel, collapsed ) {
+            panel.classList.toggle( "panel-collapsed", collapsed );
+        }
+
+        function updateToggleIcon( side ) {
+            var btn = side === "left" ? btnLeft : btnRight;
+            var panel = side === "left" ? leftPanel : rightPanel;
+            var isOpen = !panel.classList.contains( "panel-collapsed" );
+
+            if ( side === "left" ) {
+                btn.textContent = isOpen ? "\u25C0" : "\u25B6";
+                btn.title = isOpen ? "Hide left panel" : "Show left panel";
+            } else {
+                btn.textContent = isOpen ? "\u25B6" : "\u25C0";
+                btn.title = isOpen ? "Hide right panel" : "Show right panel";
+            }
+        }
+
+        function updateBackdrop() {
+            if ( !backdrop || !isNarrow() ) {
+                if ( backdrop ) backdrop.classList.remove( "visible" );
+                return;
+            }
+            var anyOpen = !leftPanel.classList.contains( "panel-collapsed" ) ||
+                          !rightPanel.classList.contains( "panel-collapsed" );
+            backdrop.classList.toggle( "visible", anyOpen );
+        }
+
+        function applyState() {
+            if ( isNarrow() ) {
+                // Mobile: always collapse both
+                setCollapsed( leftPanel, true );
+                setCollapsed( rightPanel, true );
+            } else {
+                // Desktop: restore saved preference
+                setCollapsed( leftPanel, getDesktopState( "left" ) === "closed" );
+                setCollapsed( rightPanel, getDesktopState( "right" ) === "closed" );
+            }
+            updateToggleIcon( "left" );
+            updateToggleIcon( "right" );
+            updateBackdrop();
+        }
+
+        function togglePanel( side ) {
+            var panel = side === "left" ? leftPanel : rightPanel;
+            var willOpen = panel.classList.contains( "panel-collapsed" );
+            setCollapsed( panel, !willOpen );
+
+            // Only persist if in desktop mode
+            if ( !isNarrow() ) {
+                setDesktopState( side, willOpen ? "open" : "closed" );
+            }
+
+            updateToggleIcon( side );
+            updateBackdrop();
+        }
+
+        btnLeft.addEventListener( "click", function() { togglePanel( "left" ); } );
+        btnRight.addEventListener( "click", function() { togglePanel( "right" ); } );
+
+        if ( backdrop ) {
+            backdrop.addEventListener( "click", function() {
+                setCollapsed( leftPanel, true );
+                setCollapsed( rightPanel, true );
+                // Mobile backdrop close is not saved to desktop state
+                updateToggleIcon( "left" );
+                updateToggleIcon( "right" );
+                updateBackdrop();
+            } );
+        }
+
+        applyState();
+
+        BP_MOBILE.addEventListener( "change", function() {
+            applyState();
+        } );
+    }
+
+    // =========================================================================
+    // TOOLBAR LAYOUT (inline vs own row)
+    // =========================================================================
+
+    /**
+     * Moves tool buttons between the inline container (in the main row) and
+     * a separate row below it. Uses a ResizeObserver to detect when the tools
+     * would overflow the space between the title and the scale/docs controls.
+     */
+    function setupToolbarLayout() {
+        var mainRow = document.getElementById( "header-main-row" );
+        var inlineSlot = document.getElementById( "header-tools-inline" );
+        var separateRow = document.getElementById( "header-tools-row" );
+        if ( !mainRow || !inlineSlot || !separateRow ) return;
+
+        var headerLeft = mainRow.querySelector( ".header-left" );
+        var headerRight = mainRow.querySelector( ".header-right" );
+        var toolNodes = Array.from( inlineSlot.children );
+        var isWrapped = false;
+        var checking = false;
+
+        function getToolsWidth() {
+            var total = 0;
+            for ( var i = 0; i < toolNodes.length; i++ ) {
+                if ( toolNodes[i].style.display === "none" ) continue;
+                total += toolNodes[i].offsetWidth;
+            }
+            var gap = parseFloat( getComputedStyle( inlineSlot ).gap ) || 0;
+            var visibleCount = 0;
+            for ( var j = 0; j < toolNodes.length; j++ ) {
+                if ( toolNodes[j].style.display !== "none" && toolNodes[j].offsetWidth > 0 ) visibleCount++;
+            }
+            if ( visibleCount > 1 ) total += gap * ( visibleCount - 1 );
+            return total;
+        }
+
+        function checkLayout() {
+            if ( checking ) return;
+            checking = true;
+
+            if ( BP_MOBILE.matches ) {
+                if ( !isWrapped ) {
+                    moveToSeparateRow();
+                }
+                checking = false;
+                return;
+            }
+
+            // Temporarily move tools inline to measure available space
+            if ( isWrapped ) {
+                moveToInline();
+            }
+
+            var rowPadding = parseFloat( getComputedStyle( mainRow ).paddingLeft ) * 2;
+            var rowGap = parseFloat( getComputedStyle( mainRow ).gap ) || 0;
+            var available = mainRow.offsetWidth - rowPadding - headerLeft.offsetWidth - headerRight.offsetWidth - ( rowGap * 2 );
+            var needed = getToolsWidth();
+
+            if ( needed > available ) {
+                moveToSeparateRow();
+            }
+            checking = false;
+        }
+
+        function moveToSeparateRow() {
+            if ( isWrapped ) return;
+            isWrapped = true;
+            for ( var i = 0; i < toolNodes.length; i++ ) {
+                separateRow.appendChild( toolNodes[i] );
+            }
+            separateRow.classList.add( "visible" );
+            inlineSlot.style.display = "none";
+        }
+
+        function moveToInline() {
+            if ( !isWrapped ) return;
+            isWrapped = false;
+            for ( var i = 0; i < toolNodes.length; i++ ) {
+                inlineSlot.appendChild( toolNodes[i] );
+            }
+            separateRow.classList.remove( "visible" );
+            inlineSlot.style.display = "";
+        }
+
+        var observer = new ResizeObserver( function() {
+            checkLayout();
+        } );
+        observer.observe( mainRow );
+
+        BP_MOBILE.addEventListener( "change", function() {
+            checkLayout();
+        } );
+
+        checkLayout();
+    }
+
+    // =========================================================================
+    // TOOLBAR TOGGLE (small screens)
+    // =========================================================================
+
+    function setupToolbarToggle() {
+        var btn = document.getElementById( "btn-toggle-toolbar" );
+        var exportRow = document.getElementById( "header-export-row" );
+        if ( !btn ) return;
+
+        function getToggleTargets() {
+            var toolsRow = document.getElementById( "header-tools-row" );
+            var targets = [];
+            if ( toolsRow && toolsRow.classList.contains( "visible" ) ) targets.push( toolsRow );
+            if ( exportRow ) targets.push( exportRow );
+            return targets;
+        }
+
+        function collapseToolbar() {
+            var targets = getToggleTargets();
+            for ( var i = 0; i < targets.length; i++ ) {
+                targets[i].classList.add( "toolbar-hidden" );
+            }
+            btn.textContent = "\u2630";
+        }
+
+        function expandToolbar() {
+            var targets = getToggleTargets();
+            for ( var i = 0; i < targets.length; i++ ) {
+                targets[i].classList.remove( "toolbar-hidden" );
+            }
+            btn.textContent = "\u2715";
+        }
+
+        // In mobile mode, start with toolbar collapsed
+        if ( BP_MOBILE.matches ) {
+            collapseToolbar();
+        }
+
+        BP_MOBILE.addEventListener( "change", function() {
+            if ( BP_MOBILE.matches ) {
+                collapseToolbar();
+            } else {
+                expandToolbar();
+            }
+        } );
+
+        btn.addEventListener( "click", function() {
+            var targets = getToggleTargets();
+            var isHidden = targets.length > 0 && targets[0].classList.contains( "toolbar-hidden" );
+            if ( isHidden ) {
+                expandToolbar();
+            } else {
+                collapseToolbar();
+            }
+        } );
     }
 
     document.addEventListener( "DOMContentLoaded", initUI );
@@ -804,6 +1191,120 @@
     }
 
     // =========================================================================
+    // GENERIC MODAL DIALOGS
+    // =========================================================================
+
+    /**
+     * Shows a confirmation modal and returns a Promise that resolves to true/false.
+     * @param {string} title - Modal heading text
+     * @param {string} message - Body text
+     * @param {Object} [opts] - Optional settings
+     * @param {string} [opts.confirmLabel="OK"] - Label for the confirm button
+     * @param {boolean} [opts.danger=false] - Use red danger styling on confirm button
+     */
+    function showConfirm( title, message, opts ) {
+        opts = opts || {};
+        return new Promise( function( resolve ) {
+            var overlay = document.getElementById( "generic-modal-overlay" );
+            var titleEl = document.getElementById( "generic-modal-title" );
+            var messageEl = document.getElementById( "generic-modal-message" );
+            var inputEl = document.getElementById( "generic-modal-input" );
+            var confirmBtn = document.getElementById( "generic-modal-confirm" );
+            var cancelBtn = document.getElementById( "generic-modal-cancel" );
+
+            titleEl.textContent = title;
+            messageEl.textContent = message;
+            inputEl.style.display = "none";
+            inputEl.value = "";
+            confirmBtn.textContent = opts.confirmLabel || "OK";
+            confirmBtn.className = "btn confirm-btn " + ( opts.danger ? "confirm-btn-danger" : "btn-primary" );
+
+            function cleanup() {
+                overlay.style.display = "none";
+                confirmBtn.removeEventListener( "click", onConfirm );
+                cancelBtn.removeEventListener( "click", onCancel );
+                overlay.removeEventListener( "click", onBackdrop );
+                document.removeEventListener( "keydown", onKey );
+            }
+
+            function onConfirm() { cleanup(); resolve( true ); }
+            function onCancel() { cleanup(); resolve( false ); }
+            function onBackdrop( e ) { if ( e.target === overlay ) { onCancel(); } }
+            function onKey( e ) {
+                if ( e.key === "Escape" ) { onCancel(); }
+                if ( e.key === "Enter" ) { onConfirm(); }
+            }
+
+            confirmBtn.addEventListener( "click", onConfirm );
+            cancelBtn.addEventListener( "click", onCancel );
+            overlay.addEventListener( "click", onBackdrop );
+            document.addEventListener( "keydown", onKey );
+
+            overlay.style.display = "";
+            confirmBtn.focus();
+        } );
+    }
+
+    /**
+     * Shows a prompt modal with a text input and returns a Promise.
+     * Resolves to the trimmed input string, or null if cancelled.
+     * @param {string} title - Modal heading text
+     * @param {string} [message] - Body text (optional)
+     * @param {Object} [opts] - Optional settings
+     * @param {string} [opts.placeholder=""] - Input placeholder
+     * @param {string} [opts.confirmLabel="OK"] - Label for the confirm button
+     */
+    function showPrompt( title, message, opts ) {
+        opts = opts || {};
+        return new Promise( function( resolve ) {
+            var overlay = document.getElementById( "generic-modal-overlay" );
+            var titleEl = document.getElementById( "generic-modal-title" );
+            var messageEl = document.getElementById( "generic-modal-message" );
+            var inputEl = document.getElementById( "generic-modal-input" );
+            var confirmBtn = document.getElementById( "generic-modal-confirm" );
+            var cancelBtn = document.getElementById( "generic-modal-cancel" );
+
+            titleEl.textContent = title;
+            messageEl.textContent = message || "";
+            messageEl.style.display = message ? "" : "none";
+            inputEl.style.display = "";
+            inputEl.value = "";
+            inputEl.placeholder = opts.placeholder || "";
+            confirmBtn.textContent = opts.confirmLabel || "OK";
+            confirmBtn.className = "btn confirm-btn btn-primary";
+
+            function cleanup() {
+                overlay.style.display = "none";
+                messageEl.style.display = "";
+                confirmBtn.removeEventListener( "click", onConfirm );
+                cancelBtn.removeEventListener( "click", onCancel );
+                overlay.removeEventListener( "click", onBackdrop );
+                document.removeEventListener( "keydown", onKey );
+            }
+
+            function onConfirm() {
+                var val = inputEl.value.trim();
+                cleanup();
+                resolve( val || null );
+            }
+            function onCancel() { cleanup(); resolve( null ); }
+            function onBackdrop( e ) { if ( e.target === overlay ) { onCancel(); } }
+            function onKey( e ) {
+                if ( e.key === "Escape" ) { onCancel(); }
+                if ( e.key === "Enter" ) { onConfirm(); }
+            }
+
+            confirmBtn.addEventListener( "click", onConfirm );
+            cancelBtn.addEventListener( "click", onCancel );
+            overlay.addEventListener( "click", onBackdrop );
+            document.addEventListener( "keydown", onKey );
+
+            overlay.style.display = "";
+            inputEl.focus();
+        } );
+    }
+
+    // =========================================================================
     // PARAMS CONTAINER ENABLE/DISABLE
     // =========================================================================
 
@@ -823,6 +1324,8 @@
 
         const inputs = container.querySelectorAll( "input, select" );
         inputs.forEach( function( input ) {
+            // Keep param search functional even when no emitter is selected
+            if ( input.id === "param-search" ) return;
             input.disabled = !enabled;
         } );
     }
@@ -836,57 +1339,121 @@
         var hasEmitters = state.objects.some( function( o ) { return o.type !== TYPE_IMAGE; } );
         var hasSelectedEmitter = !!state.selectedObjectId && state.selectedObjectType === TYPE_EMITTER;
 
+        const btnCopy = document.getElementById( "btn-export-copy" );
         const btnJson = document.getElementById( "btn-export-json" );
         const btnPng = document.getElementById( "btn-export-png" );
         const btnZip = document.getElementById( "btn-export-zip" );
         const btnAllZip = document.getElementById( "btn-export-all-zip" );
 
+        if ( btnCopy ) btnCopy.disabled = !hasSelectedEmitter;
         if ( btnJson ) btnJson.disabled = !hasSelectedEmitter;
         if ( btnPng ) btnPng.disabled = !hasSelectedEmitter;
         if ( btnZip ) btnZip.disabled = !hasSelectedEmitter;
         if ( btnAllZip ) btnAllZip.disabled = !hasEmitters;
     }
 
-    /** Updates the export section header to show the selected object's name. */
+    /** Updates the header export label to show the selected emitter's name. */
     function updateExportHeader() {
-        const header = document.getElementById( "export-current-header" );
-        const message = document.getElementById( "export-current-message" );
-        if ( !header ) return;
+        const label = document.getElementById( "header-export-label" );
+        if ( !label ) return;
 
         if ( state.selectedObjectType === TYPE_EMITTER && state.selectedObjectName ) {
-            header.textContent = "EXPORT EMITTER: " + state.selectedObjectName;
-            if ( message ) { message.style.display = "none"; message.textContent = ""; }
+            label.textContent = "Export " + state.selectedObjectName + ":";
         } else {
-            header.textContent = "SELECT AN EMITTER TO EXPORT";
-            if ( message ) { message.style.display = "none"; message.textContent = ""; }
+            label.textContent = "Export:";
         }
+    }
+
+    // =========================================================================
+    // PARTICLE COUNT DISPLAY
+    // =========================================================================
+
+    /** Updates the header particle count readout from current emitter params. */
+    function updateParticleCount() {
+        var el = document.getElementById( "particle-count" );
+        if ( !el ) return;
+
+        if ( state.selectedObjectType !== TYPE_EMITTER || !state.selectedObjectId ) {
+            el.textContent = "";
+            return;
+        }
+
+        // Read live DOM values so the display updates during slider drag
+        var maxEl = document.querySelector( "[data-param='maxParticles']" );
+        var lifeEl = document.querySelector( "[data-param='particleLifespan']" );
+        var maxParticles = maxEl ? parseFloat( maxEl.value ) : ( state.currentParams.maxParticles || 256 );
+        var lifespan = lifeEl ? parseFloat( lifeEl.value ) : ( state.currentParams.particleLifespan || 1 );
+
+        if ( isNaN( maxParticles ) || maxParticles < 1 ) maxParticles = 1;
+        if ( isNaN( lifespan ) || lifespan <= 0 ) lifespan = 0.01;
+
+        var emissionRate = Math.round( maxParticles / lifespan );
+        el.textContent = "Max: " + maxParticles + " (" + emissionRate + "/s)";
     }
 
     // =========================================================================
     // SECTION TOGGLE
     // =========================================================================
 
-    /** Sets up collapsible section headers in the right sidebar. */
+    var SECTION_STATE_KEY = "section-collapse-state";
+
+    /** Reads persisted section collapse state from localStorage. */
+    function getSectionCollapseState() {
+        try {
+            var data = localStorage.getItem( SECTION_STATE_KEY );
+            return data ? JSON.parse( data ) : null;
+        } catch ( e ) {
+            return null;
+        }
+    }
+
+    /** Saves section collapse state to localStorage. */
+    function saveSectionCollapseState( stateObj ) {
+        try {
+            localStorage.setItem( SECTION_STATE_KEY, JSON.stringify( stateObj ) );
+        } catch ( e ) {
+            // Ignore quota errors for non-critical UI state
+        }
+    }
+
+    /** Sets up collapsible section headers in the right sidebar with localStorage persistence. */
     function setupSectionToggles() {
-        const headers = document.querySelectorAll( ".section-header[data-toggle]" );
+        var savedState = getSectionCollapseState();
+        var headers = document.querySelectorAll( ".section-header[data-toggle]" );
+
         headers.forEach( function( header ) {
+            var toggleId = header.getAttribute( "data-toggle" );
+            var section = header.parentElement;
+            var content = section.querySelector( ".section-content" );
+            var icon = header.querySelector( ".toggle-icon" );
+
             header.setAttribute( "tabindex", "0" );
             header.setAttribute( "role", "button" );
-            const isCollapsedInit = header.parentElement.classList.contains( "collapsed" );
-            header.setAttribute( "aria-expanded", isCollapsedInit ? "false" : "true" );
+
+            // Restore saved state if available, overriding HTML defaults
+            if ( savedState && savedState.hasOwnProperty( toggleId ) && content ) {
+                var shouldCollapse = savedState[toggleId];
+                content.style.display = shouldCollapse ? "none" : "block";
+                if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6" : "\u25BC";
+                section.classList.toggle( "collapsed", shouldCollapse );
+            }
+
+            var isCollapsed = section.classList.contains( "collapsed" );
+            header.setAttribute( "aria-expanded", isCollapsed ? "false" : "true" );
 
             function toggleSection() {
-                const section = header.parentElement;
-                const content = section.querySelector( ".section-content" );
-                const icon = header.querySelector( ".toggle-icon" );
-
                 if ( !content ) return;
 
-                const isCollapsed = content.style.display === "none";
-                content.style.display = isCollapsed ? "block" : "none";
-                icon.innerHTML = isCollapsed ? "\u25BC" : "\u25B6";
-                section.classList.toggle( "collapsed", !isCollapsed );
-                header.setAttribute( "aria-expanded", isCollapsed ? "true" : "false" );
+                var wasCollapsed = content.style.display === "none";
+                content.style.display = wasCollapsed ? "block" : "none";
+                if ( icon ) icon.innerHTML = wasCollapsed ? "\u25BC" : "\u25B6";
+                section.classList.toggle( "collapsed", !wasCollapsed );
+                header.setAttribute( "aria-expanded", wasCollapsed ? "true" : "false" );
+
+                // Persist updated state
+                var current = getSectionCollapseState() || {};
+                current[toggleId] = !wasCollapsed;
+                saveSectionCollapseState( current );
             }
 
             header.addEventListener( "click", toggleSection );
@@ -900,6 +1467,129 @@
     }
 
     // =========================================================================
+    // PARAMETER SEARCH / FILTER
+    // =========================================================================
+
+    /** Sets up the parameter search input to filter right sidebar sections by name. */
+    function setupParamSearch() {
+        var input = document.getElementById( "param-search" );
+        var clearBtn = document.getElementById( "param-search-clear" );
+        if ( !input ) return;
+
+        var container = document.getElementById( "params-container" );
+        var sections = container ? container.querySelectorAll( ".param-section" ) : [];
+        var gradientBar = document.getElementById( "color-gradient-bar" );
+
+        function applyFilter() {
+            var query = input.value.trim().toLowerCase();
+            clearBtn.style.display = query ? "" : "none";
+
+            if ( !query ) {
+                // Restore all sections to their natural visibility
+                for ( var i = 0; i < sections.length; i++ ) {
+                    sections[i].style.display = "";
+                    sections[i].classList.remove( "search-match" );
+
+                    // Restore saved collapse state
+                    var header = sections[i].querySelector( ".section-header[data-toggle]" );
+                    if ( header ) {
+                        var toggleId = header.getAttribute( "data-toggle" );
+                        var saved = getSectionCollapseState();
+                        var content = sections[i].querySelector( ".section-content" );
+                        var icon = header.querySelector( ".toggle-icon" );
+                        if ( saved && saved.hasOwnProperty( toggleId ) && content ) {
+                            var shouldCollapse = saved[toggleId];
+                            content.style.display = shouldCollapse ? "none" : "block";
+                            if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6" : "\u25BC";
+                            sections[i].classList.toggle( "collapsed", shouldCollapse );
+                            header.setAttribute( "aria-expanded", shouldCollapse ? "false" : "true" );
+                        }
+                    }
+
+                    // Restore individual param-row visibility within the section
+                    var rows = sections[i].querySelectorAll( ".param-row, .color-compact-header, .color-sliders, .color-slider-row, .color-compact-field" );
+                    for ( var r = 0; r < rows.length; r++ ) {
+                        rows[r].style.removeProperty( "display" );
+                    }
+                }
+                // Restore gradient bar, then let emitter type logic re-hide if needed
+                if ( gradientBar ) gradientBar.style.display = "";
+                var emitterSelect = document.querySelector( "[data-param='emitterType']" );
+                if ( emitterSelect ) updateEmitterTypeSections( parseInt( emitterSelect.value, 10 ) );
+                return;
+            }
+
+            var colorStartVisible = false;
+            var colorEndVisible = false;
+            var emitterSelect = document.querySelector( "[data-param='emitterType']" );
+            var emitterType = emitterSelect ? parseInt( emitterSelect.value, 10 ) : 0;
+
+            for ( var i = 0; i < sections.length; i++ ) {
+                var header = sections[i].querySelector( ".section-header" );
+                var headerText = header ? header.textContent.toLowerCase() : "";
+                var sectionMatch = headerText.indexOf( query ) !== -1;
+
+                // Check individual parameter labels within the section
+                var labels = sections[i].querySelectorAll( "label" );
+                var hasLabelMatch = false;
+                for ( var j = 0; j < labels.length; j++ ) {
+                    var labelText = labels[j].textContent.toLowerCase();
+                    if ( labelText.indexOf( query ) !== -1 ) {
+                        hasLabelMatch = true;
+                        break;
+                    }
+                }
+
+                var visible = sectionMatch || hasLabelMatch;
+
+                // Respect emitter type: only show the physics section for the active mode
+                var toggleAttr = header ? header.getAttribute( "data-toggle" ) : "";
+                if ( toggleAttr === "physicsGravity" && emitterType !== 0 ) visible = false;
+                if ( toggleAttr === "physicsRadial" && emitterType !== 1 ) visible = false;
+
+                sections[i].style.display = visible ? "" : "none";
+                sections[i].classList.toggle( "search-match", visible );
+
+                // Auto-expand matching sections so results are visible
+                if ( visible ) {
+                    var content = sections[i].querySelector( ".section-content" );
+                    var icon = sections[i].querySelector( ".toggle-icon" );
+                    if ( content ) content.style.display = "block";
+                    if ( icon ) icon.innerHTML = "\u25BC";
+                    sections[i].classList.remove( "collapsed" );
+                    if ( header ) header.setAttribute( "aria-expanded", "true" );
+
+                    // Track color section visibility for gradient bar
+                    if ( toggleAttr === "colorStart" ) colorStartVisible = true;
+                    if ( toggleAttr === "colorEnd" ) colorEndVisible = true;
+                }
+            }
+
+            // Show gradient bar only if both color sections are visible
+            if ( gradientBar ) {
+                gradientBar.style.display = ( colorStartVisible && colorEndVisible ) ? "" : "none";
+            }
+        }
+
+        input.addEventListener( "input", applyFilter );
+
+        clearBtn.addEventListener( "click", function() {
+            input.value = "";
+            applyFilter();
+            input.focus();
+        } );
+
+        // Escape key clears the search
+        input.addEventListener( "keydown", function( e ) {
+            if ( e.key === "Escape" ) {
+                input.value = "";
+                applyFilter();
+                input.blur();
+            }
+        } );
+    }
+
+    // =========================================================================
     // EMITTER LIST
     // =========================================================================
 
@@ -907,82 +1597,130 @@
      * Renders the object list in the left sidebar with badges, rename, delete, and duplicate buttons.
      * @param {Array<Object>} objects - Array of {id, name, type, selected} objects.
      */
+    function createObjectListItem( obj ) {
+        const li = document.createElement( "li" );
+        li.setAttribute( "data-id", obj.id );
+        li.setAttribute( "data-type", obj.type || TYPE_EMITTER );
+        li.draggable = true;
+
+        const typeBadge = document.createElement( "span" );
+        typeBadge.className = "object-type-badge " + ( obj.type === TYPE_IMAGE ? "badge-image" : "badge-emitter" );
+        typeBadge.textContent = obj.type === TYPE_IMAGE ? "I" : "E";
+        typeBadge.title = obj.type === TYPE_IMAGE ? "Image" : "Emitter";
+
+        const nameSpan = document.createElement( "span" );
+        nameSpan.className = "emitter-name";
+        nameSpan.textContent = obj.name;
+
+        const lockBtn = document.createElement( "button" );
+        lockBtn.className = "btn btn-lock" + ( obj.locked ? " locked" : "" );
+        lockBtn.title = obj.locked ? "Unlock" : "Lock";
+        lockBtn.setAttribute( "aria-label", ( obj.locked ? "Unlock " : "Lock " ) + obj.name );
+        lockBtn.textContent = obj.locked ? "\uD83D\uDD12\uFE0E" : "\uD83D\uDD13\uFE0E";
+
+        const dupBtn = document.createElement( "button" );
+        dupBtn.className = "btn btn-duplicate";
+        dupBtn.title = "Duplicate";
+        dupBtn.setAttribute( "aria-label", "Duplicate " + obj.name );
+        dupBtn.textContent = "\u29C9";
+
+        const delBtn = document.createElement( "button" );
+        delBtn.className = "btn btn-delete";
+        delBtn.title = "Delete";
+        delBtn.setAttribute( "aria-label", "Delete " + obj.name );
+        delBtn.textContent = "\u00D7";
+
+        li.appendChild( typeBadge );
+        li.appendChild( nameSpan );
+        li.appendChild( lockBtn );
+        li.appendChild( dupBtn );
+        li.appendChild( delBtn );
+
+        return li;
+    }
+
+    /** Updates an existing list item's mutable properties without replacing it. */
+    function updateObjectListItem( li, obj ) {
+        // Skip items with an active rename input to preserve focus
+        if ( li.querySelector( "input[type='text']" ) ) return;
+
+        const nameSpan = li.querySelector( ".emitter-name" );
+        if ( nameSpan && nameSpan.textContent !== obj.name ) {
+            nameSpan.textContent = obj.name;
+        }
+
+        const lockBtn = li.querySelector( ".btn-lock" );
+        if ( lockBtn ) {
+            var isLocked = !!obj.locked;
+            lockBtn.classList.toggle( "locked", isLocked );
+            lockBtn.title = isLocked ? "Unlock" : "Lock";
+            lockBtn.setAttribute( "aria-label", ( isLocked ? "Unlock " : "Lock " ) + obj.name );
+            lockBtn.textContent = isLocked ? "\uD83D\uDD12\uFE0E" : "\uD83D\uDD13\uFE0E";
+        }
+
+        const dupBtn = li.querySelector( ".btn-duplicate" );
+        if ( dupBtn ) {
+            dupBtn.setAttribute( "aria-label", "Duplicate " + obj.name );
+        }
+
+        const delBtn = li.querySelector( ".btn-delete" );
+        if ( delBtn ) {
+            delBtn.setAttribute( "aria-label", "Delete " + obj.name );
+        }
+
+        var isSelected = obj.selected || obj.id === state.selectedObjectId;
+        li.classList.toggle( "selected", isSelected );
+    }
+
+    /**
+     * Reconciles the object list DOM with the given objects array.
+     * Reuses existing elements to preserve focus, keyboard state, and scroll position.
+     */
     function renderObjectList( objects ) {
         const list = document.getElementById( "object-list" );
         if ( !list ) return;
-        list.innerHTML = "";
 
-        objects.forEach( function( obj ) {
-            const li = document.createElement( "li" );
-            li.setAttribute( "data-id", obj.id );
-            li.setAttribute( "data-type", obj.type || TYPE_EMITTER );
-            li.draggable = true;
-            if ( obj.selected || obj.id === state.selectedObjectId ) {
-                li.classList.add( "selected" );
+        // Build map of existing items by id
+        var existingItems = {};
+        var currentChildren = Array.from( list.children );
+        for ( var i = 0; i < currentChildren.length; i++ ) {
+            var id = currentChildren[i].getAttribute( "data-id" );
+            if ( id ) {
+                existingItems[id] = currentChildren[i];
+            }
+        }
+
+        // Track which ids are in the new list
+        var newIds = {};
+        for ( var j = 0; j < objects.length; j++ ) {
+            newIds[objects[j].id] = true;
+        }
+
+        // Remove items no longer in the list
+        for ( var k = 0; k < currentChildren.length; k++ ) {
+            var childId = currentChildren[k].getAttribute( "data-id" );
+            if ( !newIds[childId] ) {
+                list.removeChild( currentChildren[k] );
+            }
+        }
+
+        // Add or update items in correct order
+        for ( var n = 0; n < objects.length; n++ ) {
+            var obj = objects[n];
+            var li = existingItems[obj.id];
+
+            if ( li ) {
+                updateObjectListItem( li, obj );
+            } else {
+                li = createObjectListItem( obj );
+                li.classList.toggle( "selected", obj.selected || obj.id === state.selectedObjectId );
             }
 
-            // Type badge
-            const typeBadge = document.createElement( "span" );
-            typeBadge.className = "object-type-badge " + ( obj.type === TYPE_IMAGE ? "badge-image" : "badge-emitter" );
-            typeBadge.textContent = obj.type === TYPE_IMAGE ? "I" : "E";
-            typeBadge.title = obj.type === TYPE_IMAGE ? "Image" : "Emitter";
-
-            const nameSpan = document.createElement( "span" );
-            nameSpan.className = "emitter-name";
-            nameSpan.textContent = obj.name;
-            nameSpan.addEventListener( "dblclick", function( e ) {
-                e.stopPropagation();
-                startRename( li, obj.id, obj.name, obj.type || TYPE_EMITTER );
-            } );
-
-            const dupBtn = document.createElement( "button" );
-            dupBtn.className = "btn-duplicate";
-            dupBtn.title = "Duplicate";
-            dupBtn.setAttribute( "aria-label", "Duplicate " + obj.name );
-            dupBtn.textContent = "\u29C9";
-            dupBtn.addEventListener( "click", function( e ) {
-                e.stopPropagation();
-                if ( obj.type === TYPE_IMAGE ) {
-                    callLua( "duplicateImage", obj.id );
-                } else {
-                    callLua( "duplicateEmitter", obj.id );
-                }
-            } );
-
-            const delBtn = document.createElement( "button" );
-            delBtn.className = "btn-delete";
-            delBtn.title = "Delete";
-            delBtn.setAttribute( "aria-label", "Delete " + obj.name );
-            delBtn.textContent = "\u00D7";
-            delBtn.addEventListener( "click", function( e ) {
-                e.stopPropagation();
-                var typeLabel = obj.type === TYPE_IMAGE ? "image" : "emitter";
-                if ( confirm( "Delete " + typeLabel + " \"" + obj.name + "\"?" ) ) {
-                    if ( obj.type === TYPE_IMAGE ) {
-                        callLua( "removeImage", obj.id );
-                    } else {
-                        callLua( "removeEmitter", obj.id );
-                    }
-                }
-            } );
-
-            li.appendChild( typeBadge );
-            li.appendChild( nameSpan );
-            li.appendChild( dupBtn );
-            li.appendChild( delBtn );
-
-            li.addEventListener( "click", function() {
-                var objType = obj.type || TYPE_EMITTER;
-                callLua( "selectObject", obj.id, objType );
-                state.selectedObjectId = obj.id;
-                state.selectedObjectType = objType;
-                state.selectedObjectName = obj.name;
-                highlightSelectedObject( obj.id );
-                updateExportHeader();
-            } );
-
-            list.appendChild( li );
-        } );
+            // Ensure correct position: item at index n should be list.children[n]
+            if ( list.children[n] !== li ) {
+                list.insertBefore( li, list.children[n] || null );
+            }
+        }
     }
 
     /**
@@ -993,6 +1731,92 @@
         const items = document.querySelectorAll( "#object-list li" );
         items.forEach( function( li ) {
             li.classList.toggle( "selected", li.getAttribute( "data-id" ) === id );
+        } );
+    }
+
+    /** Sets up delegated click, dblclick, and button handlers on the object list. */
+    function setupObjectListEvents() {
+        const list = document.getElementById( "object-list" );
+        if ( !list ) return;
+
+        function getObjectById( id ) {
+            for ( var i = 0; i < state.objects.length; i++ ) {
+                if ( state.objects[i].id === id ) return state.objects[i];
+            }
+            return null;
+        }
+
+        list.addEventListener( "click", function( e ) {
+            var li = e.target.closest( "li" );
+            if ( !li ) return;
+
+            var id = li.getAttribute( "data-id" );
+            var obj = getObjectById( id );
+            if ( !obj ) return;
+
+            // Lock button
+            if ( e.target.closest( ".btn-lock" ) ) {
+                e.stopPropagation();
+                var newLocked = !obj.locked;
+                obj.locked = newLocked;
+                callLua( "setObjectLocked", obj.id, newLocked );
+                var lockBtn = e.target.closest( ".btn-lock" );
+                lockBtn.classList.toggle( "locked", newLocked );
+                lockBtn.title = newLocked ? "Unlock" : "Lock";
+                lockBtn.setAttribute( "aria-label", ( newLocked ? "Unlock " : "Lock " ) + obj.name );
+                lockBtn.textContent = newLocked ? "\uD83D\uDD12\uFE0E" : "\uD83D\uDD13\uFE0E";
+                return;
+            }
+
+            // Duplicate button
+            if ( e.target.closest( ".btn-duplicate" ) ) {
+                e.stopPropagation();
+                if ( obj.type === TYPE_IMAGE ) {
+                    callLua( "duplicateImage", obj.id );
+                } else {
+                    callLua( "duplicateEmitter", obj.id );
+                }
+                return;
+            }
+
+            // Delete button
+            if ( e.target.closest( ".btn-delete" ) ) {
+                e.stopPropagation();
+                var typeLabel = obj.type === TYPE_IMAGE ? "image" : "emitter";
+                showConfirm( "Delete " + typeLabel, "Delete " + typeLabel + " \"" + obj.name + "\"?" ).then( function( confirmed ) {
+                    if ( !confirmed ) return;
+                    if ( obj.type === TYPE_IMAGE ) {
+                        callLua( "removeImage", obj.id );
+                    } else {
+                        callLua( "removeEmitter", obj.id );
+                    }
+                } );
+                return;
+            }
+
+            // Row click: select object
+            var objType = obj.type || TYPE_EMITTER;
+            callLua( "selectObject", obj.id, objType );
+            state.selectedObjectId = obj.id;
+            state.selectedObjectType = objType;
+            state.selectedObjectName = obj.name;
+            highlightSelectedObject( obj.id );
+            updateExportHeader();
+        } );
+
+        list.addEventListener( "dblclick", function( e ) {
+            var nameSpan = e.target.closest( ".emitter-name" );
+            if ( !nameSpan ) return;
+
+            var li = nameSpan.closest( "li" );
+            if ( !li ) return;
+
+            var id = li.getAttribute( "data-id" );
+            var obj = getObjectById( id );
+            if ( !obj ) return;
+
+            e.stopPropagation();
+            startRename( li, obj.id, obj.name, obj.type || TYPE_EMITTER );
         } );
     }
 
@@ -1194,48 +2018,82 @@
     }
 
     // =========================================================================
-    // UPLOADED IMAGES MANIFEST (localStorage persistence)
+    // UPLOADED IMAGES MANIFEST (IDBFS persistence via Lua)
     // =========================================================================
 
-    /** Returns the array of saved uploaded images from localStorage. Each entry: { label, file, dataUrl }. */
+    /** Returns the cached uploaded images manifest. Each entry: { label, file, dataUrl? }. */
     function getUploadedImagesManifest() {
-        try {
-            var data = localStorage.getItem( UPLOADED_IMAGES_KEY );
-            return data ? JSON.parse( data ) : [];
-        } catch ( e ) {
-            return [];
-        }
+        return state._uploadedManifest || [];
     }
 
-    /** Saves the uploaded images manifest array to localStorage. */
-    function saveUploadedImagesManifest( manifest ) {
-        try {
-            localStorage.setItem( UPLOADED_IMAGES_KEY, JSON.stringify( manifest ) );
-        } catch ( e ) {
-            console.warn( "Failed to save uploaded images manifest", e );
-        }
+    /** Fetches the texture manifest from IDBFS and caches it, then rebuilds related dropdowns. */
+    function refreshTextureList() {
+        callLuaAsync( "listTextures" ).then( function( textures ) {
+            state._uploadedManifest = textures || [];
+            // Populate state.uploadedTextures keys (dataUrls loaded lazily)
+            state.uploadedTextures = {};
+            for ( var i = 0; i < state._uploadedManifest.length; i++ ) {
+                var entry = state._uploadedManifest[i];
+                state.uploadedTextures[entry.file] = { label: entry.label };
+            }
+            rebuildTextureDropdown();
+        } ).catch( function() {
+            state._uploadedManifest = [];
+        } );
     }
 
-    /** Adds an uploaded image to the persistent manifest (deduplicates by filename). */
+    /** Fetches a texture's base64 from IDBFS and returns a data URL via callback. */
+    function getUploadedTextureDataUrl( filename, callback ) {
+        // Check in-memory cache first
+        var cached = state.uploadedTextures[filename];
+        if ( cached && cached.dataUrl ) {
+            callback( cached.dataUrl );
+            return;
+        }
+        callLuaAsync( "getTextureBase64", filename ).then( function( base64 ) {
+            if ( base64 ) {
+                var dataUrl = "data:image/png;base64," + base64;
+                if ( state.uploadedTextures[filename] ) {
+                    state.uploadedTextures[filename].dataUrl = dataUrl;
+                }
+                callback( dataUrl );
+            } else {
+                callback( null );
+            }
+        } ).catch( function() {
+            callback( null );
+        } );
+    }
+
+    /** Saves a texture to IDBFS (deduplicates by filename). */
     function addToUploadedImagesManifest( filename, label, dataUrl ) {
-        var manifest = getUploadedImagesManifest();
-        // Replace if same filename already exists
-        for ( var i = 0; i < manifest.length; i++ ) {
-            if ( manifest[i].file === filename ) {
-                manifest[i] = { label: label, file: filename, dataUrl: dataUrl };
-                saveUploadedImagesManifest( manifest );
-                return;
+        var base64 = dataUrl.replace( /^data:image\/[a-z+]+;base64,/, "" );
+        callLua( "saveTexture", base64, filename, label );
+        // Update local cache immediately
+        state.uploadedTextures[filename] = { label: label, dataUrl: dataUrl };
+        if ( !state._uploadedManifest ) state._uploadedManifest = [];
+        var found = false;
+        for ( var i = 0; i < state._uploadedManifest.length; i++ ) {
+            if ( state._uploadedManifest[i].file === filename ) {
+                state._uploadedManifest[i].label = label;
+                found = true;
+                break;
             }
         }
-        manifest.push( { label: label, file: filename, dataUrl: dataUrl } );
-        saveUploadedImagesManifest( manifest );
+        if ( !found ) {
+            state._uploadedManifest.push( { label: label, file: filename } );
+        }
     }
 
-    /** Removes an uploaded image from the manifest by filename. */
+    /** Removes an uploaded texture from IDBFS. */
     function removeFromUploadedImagesManifest( filename ) {
-        var manifest = getUploadedImagesManifest();
-        manifest = manifest.filter( function( entry ) { return entry.file !== filename; } );
-        saveUploadedImagesManifest( manifest );
+        callLua( "deleteTexture", filename );
+        delete state.uploadedTextures[filename];
+        if ( state._uploadedManifest ) {
+            state._uploadedManifest = state._uploadedManifest.filter( function( entry ) {
+                return entry.file !== filename;
+            } );
+        }
     }
 
     /**
@@ -1283,7 +2141,7 @@
             } );
         }
 
-        // Previously uploaded images (from localStorage manifest)
+        // Previously uploaded images (from IDBFS manifest)
         var uploaded = getUploadedImagesManifest();
         if ( uploaded.length > 0 ) {
             var uploadedHeader = document.createElement( "div" );
@@ -1368,13 +2226,16 @@
 
     /** Loads a previously uploaded image from its saved dataUrl in the manifest. */
     function loadUploadedImage( entry ) {
-        var img = new Image();
-        img.onload = function() {
-            ensurePngDataUrl( entry.dataUrl, function( pngDataUrl ) {
-                callLua( "createImage", pngDataUrl, entry.file, entry.label, img.naturalWidth, img.naturalHeight );
-            } );
-        };
-        img.src = entry.dataUrl;
+        getUploadedTextureDataUrl( entry.file, function( dataUrl ) {
+            if ( !dataUrl ) return;
+            var img = new Image();
+            img.onload = function() {
+                ensurePngDataUrl( dataUrl, function( pngDataUrl ) {
+                    callLua( "createImage", pngDataUrl, entry.file, entry.label, img.naturalWidth, img.naturalHeight );
+                } );
+            };
+            img.src = dataUrl;
+        } );
     }
 
     // =========================================================================
@@ -1451,6 +2312,7 @@
                     const params = {};
                     for ( const key in imported ) {
                         if ( imported.hasOwnProperty( key )
+                             && key !== "version"
                              && key !== "name"
                              && key !== "textureBase64"
                              && key !== "textureFilename" ) {
@@ -1527,12 +2389,16 @@
                     syncPairedInput( input, clamped );
 
                     if ( state.selectedObjectId && !isNaN( luaValue ) ) {
-                        callLua( "setParamPreview", state.selectedObjectId, paramName, luaValue );
+                        schedulePreview( "setParamPreview", [state.selectedObjectId, paramName, luaValue] );
                     }
 
                     updateColorPreviewIfNeeded( paramName );
+                    if ( paramName === "maxParticles" || paramName === "particleLifespan" ) {
+                        updateParticleCount();
+                    }
                 } );
                 input.addEventListener( "change", function() {
+                    flushPreview();
                     if ( state.selectedObjectId ) {
                         callLua( "commitParams" );
                     }
@@ -1552,6 +2418,9 @@
                     }
 
                     updateColorPreviewIfNeeded( paramName );
+                    if ( paramName === "maxParticles" || paramName === "particleLifespan" ) {
+                        updateParticleCount();
+                    }
                 } );
                 input.addEventListener( "input", function() {
                     const paramName = input.getAttribute( "data-param" );
@@ -1571,10 +2440,11 @@
         const paramName = source.getAttribute( "data-param" );
         if ( !paramName ) return;
 
-        const row = source.closest( ".param-row" );
-        if ( !row ) return;
+        // Try .param-row first (standard params), fall back to .section-content (color sections)
+        const container = source.closest( ".param-row" ) || source.closest( ".section-content" );
+        if ( !container ) return;
 
-        const paired = row.querySelectorAll( "[data-param='" + paramName + "']" );
+        const paired = container.querySelectorAll( "[data-param='" + paramName + "']" );
         paired.forEach( function( input ) {
             if ( input !== source ) {
                 input.value = value;
@@ -1621,12 +2491,22 @@
             );
         }
 
+        updateGradientBar();
+
         // Texture dropdown is normally synced by updateTextureUI() which knows about
         // custom vs preset textures. This only handles the simple preset-path case.
         const texturePreset = document.getElementById( "texture-preset" );
         if ( texturePreset && params.textureFileName && texturePreset.value.indexOf( PREFIX_CUSTOM ) !== 0 ) {
             texturePreset.value = params.textureFileName;
         }
+
+        // Re-apply search filter so section visibility stays consistent
+        var searchInput = document.getElementById( "param-search" );
+        if ( searchInput && searchInput.value.trim() ) {
+            searchInput.dispatchEvent( new Event( "input" ) );
+        }
+
+        updateParticleCount();
     }
 
     // =========================================================================
@@ -1646,16 +2526,18 @@
                 setInputValue( "startColorRed", rgb.r );
                 setInputValue( "startColorGreen", rgb.g );
                 setInputValue( "startColorBlue", rgb.b );
+                updateGradientBar();
 
                 if ( state.selectedObjectId ) {
-                    callLua( "setParamsPreview", state.selectedObjectId, {
+                    schedulePreview( "setParamsPreview", [state.selectedObjectId, {
                         startColorRed: rgb.r,
                         startColorGreen: rgb.g,
                         startColorBlue: rgb.b,
-                    } );
+                    }] );
                 }
             } );
             startPicker.addEventListener( "change", function() {
+                flushPreview();
                 if ( state.selectedObjectId ) {
                     callLua( "commitParams" );
                 }
@@ -1668,16 +2550,18 @@
                 setInputValue( "finishColorRed", rgb.r );
                 setInputValue( "finishColorGreen", rgb.g );
                 setInputValue( "finishColorBlue", rgb.b );
+                updateGradientBar();
 
                 if ( state.selectedObjectId ) {
-                    callLua( "setParamsPreview", state.selectedObjectId, {
+                    schedulePreview( "setParamsPreview", [state.selectedObjectId, {
                         finishColorRed: rgb.r,
                         finishColorGreen: rgb.g,
                         finishColorBlue: rgb.b,
-                    } );
+                    }] );
                 }
             } );
             endPicker.addEventListener( "change", function() {
+                flushPreview();
                 if ( state.selectedObjectId ) {
                     callLua( "commitParams" );
                 }
@@ -1721,6 +2605,7 @@
                     getInputValue( "startColorBlue" )
                 );
             }
+            updateGradientBar();
         } else if ( paramName.indexOf( "finishColor" ) === 0 && paramName.indexOf( "Variance" ) === -1 ) {
             var picker = document.getElementById( "color-end-picker" );
             if ( picker ) {
@@ -1730,13 +2615,42 @@
                     getInputValue( "finishColorBlue" )
                 );
             }
+            updateGradientBar();
         }
+    }
+
+    /**
+     * Updates the gradient preview bar between Color Start and Color End sections.
+     * Shows a left-to-right gradient using the current RGBA values of both colors.
+     */
+    function updateGradientBar() {
+        var track = document.getElementById( "color-gradient-track" );
+        if ( !track ) return;
+
+        var sr = Math.round( getInputValue( "startColorRed" ) * 255 );
+        var sg = Math.round( getInputValue( "startColorGreen" ) * 255 );
+        var sb = Math.round( getInputValue( "startColorBlue" ) * 255 );
+        var sa = getInputValue( "startColorAlpha" );
+
+        var er = Math.round( getInputValue( "finishColorRed" ) * 255 );
+        var eg = Math.round( getInputValue( "finishColorGreen" ) * 255 );
+        var eb = Math.round( getInputValue( "finishColorBlue" ) * 255 );
+        var ea = getInputValue( "finishColorAlpha" );
+
+        track.style.background = "linear-gradient(to right, rgba(" +
+            sr + "," + sg + "," + sb + "," + sa + "), rgba(" +
+            er + "," + eg + "," + eb + "," + ea + "))";
     }
 
 
     // =========================================================================
     // EMITTER TYPE SWITCHING
     // =========================================================================
+
+    var EMITTER_TYPE_DESC = {
+        0: "Particles move outward from source, affected by gravity and linear acceleration.",
+        1: "Particles orbit the source at a set radius, spiraling inward or outward over their lifetime."
+    };
 
     /**
      * Shows/hides physics sections based on emitter type (gravity vs radial).
@@ -1762,6 +2676,11 @@
         radialRows.forEach( function( row ) {
             row.style.display = ( emitterType === 1 ) ? "" : "none";
         } );
+
+        var descEl = document.getElementById( "emitter-type-desc" );
+        if ( descEl ) {
+            descEl.textContent = EMITTER_TYPE_DESC[emitterType] || "";
+        }
     }
 
     /**
@@ -1772,6 +2691,11 @@
         selects.forEach( function( select ) {
             select.addEventListener( "change", function() {
                 updateEmitterTypeSections( parseInt( select.value, 10 ) );
+                // Re-apply search filter so physics section visibility updates
+                var searchInput = document.getElementById( "param-search" );
+                if ( searchInput && searchInput.value.trim() ) {
+                    searchInput.dispatchEvent( new Event( "input" ) );
+                }
             } );
         } );
     }
@@ -2148,6 +3072,7 @@
      * Sets up all export button click handlers.
      */
     function setupExport() {
+        document.getElementById( "btn-export-copy" ).addEventListener( "click", copyCurrentJson );
         document.getElementById( "btn-export-json" ).addEventListener( "click", exportCurrentJson );
         document.getElementById( "btn-export-png" ).addEventListener( "click", exportCurrentPng );
         document.getElementById( "btn-export-zip" ).addEventListener( "click", exportCurrentZip );
@@ -2160,7 +3085,7 @@
      * @returns {Object} Clean export object
      */
     function buildExportObj( data ) {
-        const exportObj = {};
+        const exportObj = { version: 1 };
         if ( data.params ) {
             for ( const key in data.params ) {
                 exportObj[key] = data.params[key];
@@ -2171,6 +3096,33 @@
         }
         exportObj.name = data.name;
         return exportObj;
+    }
+
+    /**
+     * Copies the selected emitter's JSON to the clipboard.
+     */
+    function copyCurrentJson() {
+        if ( !state.selectedObjectId || state.selectedObjectType !== TYPE_EMITTER ) return;
+
+        callLuaAsync( "getExportData", state.selectedObjectId ).then( function( data ) {
+            if ( !data ) return;
+
+            const exportObj = buildExportObj( data );
+            const jsonStr = JSON.stringify( exportObj, null, 2 );
+
+            if ( navigator.clipboard && navigator.clipboard.writeText ) {
+                navigator.clipboard.writeText( jsonStr ).then( function() {
+                    showToast( "Copied JSON to clipboard" );
+                } ).catch( function() {
+                    showToast( "Copy failed: clipboard access denied" );
+                } );
+            } else {
+                showToast( "Copy failed: clipboard API not available" );
+            }
+        } ).catch( function( err ) {
+            console.error( "Copy JSON failed:", err );
+            showToast( "Copy failed" );
+        } );
     }
 
     /**
@@ -2679,6 +3631,37 @@
     }
 
     // =========================================================================
+    // CANVAS SETTINGS POPOVER
+    // =========================================================================
+
+    /** Wires the gear button to toggle the canvas settings popover open/closed. */
+    function setupCanvasSettings() {
+        var btn = document.getElementById( "btn-canvas-settings" );
+        var popover = document.getElementById( "canvas-settings-popover" );
+        if ( !btn || !popover ) return;
+
+        btn.addEventListener( "click", function( e ) {
+            e.stopPropagation();
+            var isOpen = popover.style.display !== "none";
+            popover.style.display = isOpen ? "none" : "";
+            btn.classList.toggle( "active", !isOpen );
+        } );
+
+        // Close popover when clicking outside of it
+        document.addEventListener( "click", function( e ) {
+            if ( popover.style.display !== "none" && !popover.contains( e.target ) && e.target !== btn ) {
+                popover.style.display = "none";
+                btn.classList.remove( "active" );
+            }
+        } );
+
+        // Prevent scroll-to-zoom when interacting with popover controls
+        popover.addEventListener( "wheel", function( e ) {
+            e.stopPropagation();
+        } );
+    }
+
+    // =========================================================================
     // UI SCALE CONTROL
     // =========================================================================
 
@@ -2690,23 +3673,37 @@
         if ( !slider ) return;
 
         const savedScale = localStorage.getItem( "ui-scale-factor" );
-        var scale = savedScale ? parseFloat( savedScale ) : 1.2;
-        if ( scale < 1.0 ) scale = 1.0;
-        if ( scale > 2.0 ) scale = 2.0;
-        slider.value = scale;
-        document.documentElement.style.setProperty( "--scale-factor", scale );
-        if ( valueDisplay ) {
-            valueDisplay.textContent = Math.round( scale * 100 ) + "%";
-        }
+        var userScale = savedScale ? parseFloat( savedScale ) : 1.2;
+        if ( userScale < 1.0 ) userScale = 1.0;
+        if ( userScale > 2.0 ) userScale = 2.0;
 
-        slider.addEventListener( "input", function() {
-            const scale = parseFloat( slider.value );
+        function applyScale( scale ) {
             document.documentElement.style.setProperty( "--scale-factor", scale );
             if ( valueDisplay ) {
                 valueDisplay.textContent = Math.round( scale * 100 ) + "%";
             }
-            localStorage.setItem( "ui-scale-factor", scale );
+        }
+
+        function syncToScreen() {
+            if ( BP_MOBILE.matches ) {
+                applyScale( 1 );
+                slider.value = 1;
+                slider.disabled = true;
+            } else {
+                applyScale( userScale );
+                slider.value = userScale;
+                slider.disabled = false;
+            }
+        }
+
+        slider.addEventListener( "input", function() {
+            userScale = parseFloat( slider.value );
+            applyScale( userScale );
+            localStorage.setItem( "ui-scale-factor", userScale );
         } );
+
+        BP_MOBILE.addEventListener( "change", syncToScreen );
+        syncToScreen();
     }
 
     // =========================================================================
@@ -2862,10 +3859,10 @@
 
         if ( saveBtn ) {
             saveBtn.addEventListener( "click", function() {
-                var name = prompt( "Scene name:" );
-                if ( !name || !name.trim() ) return;
-                name = name.trim();
-                saveCustomScene( name );
+                showPrompt( "Save scene", null, { placeholder: "Scene name", confirmLabel: "Save" } ).then( function( name ) {
+                    if ( !name ) return;
+                    saveCustomScene( name );
+                } );
             } );
         }
 
@@ -2877,8 +3874,10 @@
                     return;
                 }
                 var sceneName = value.substring( PREFIX_CUSTOM.length );
-                if ( !confirm( "Delete scene \"" + sceneName + "\"?" ) ) return;
-                deleteCustomScene( sceneName );
+                showConfirm( "Delete scene", "Delete scene \"" + sceneName + "\"?", { danger: true, confirmLabel: "Delete" } ).then( function( confirmed ) {
+                    if ( !confirmed ) return;
+                    deleteCustomScene( sceneName );
+                } );
             } );
         }
 
@@ -2914,45 +3913,32 @@
         }
         select.appendChild( presetGroup );
 
-        // Custom scenes
-        var customScenes = getCustomScenes();
-        var customNames = Object.keys( customScenes ).sort();
-        if ( customNames.length > 0 ) {
+        // Custom scenes (from IDBFS, cached in state.savedScenes)
+        var customScenes = state.savedScenes || [];
+        if ( customScenes.length > 0 ) {
             var customGroup = document.createElement( "optgroup" );
             customGroup.label = "Saved Scenes";
-            customNames.forEach( function( name ) {
+            for ( var i = 0; i < customScenes.length; i++ ) {
                 var option = document.createElement( "option" );
-                option.value = PREFIX_CUSTOM + name;
-                option.textContent = name;
+                option.value = PREFIX_CUSTOM + customScenes[i].name;
+                option.textContent = customScenes[i].name;
                 customGroup.appendChild( option );
-            } );
+            }
             select.appendChild( customGroup );
         }
 
         select.value = currentValue;
     }
 
-    /** Reads saved custom scenes from localStorage, returning an object keyed by name. */
-    function getCustomScenes() {
-        try {
-            var data = localStorage.getItem( SCENES_STORAGE_KEY );
-            return data ? JSON.parse( data ) : {};
-        } catch ( e ) {
-            return {};
-        }
-    }
-
-    /** Persists the custom scenes object to localStorage, handling quota errors. */
-    function saveCustomScenes( scenes ) {
-        try {
-            localStorage.setItem( SCENES_STORAGE_KEY, JSON.stringify( scenes ) );
-        } catch ( e ) {
-            if ( e.name === "QuotaExceededError" || e.code === 22 ) {
-                showToast( "Storage full — cannot save scene. Try deleting old scenes." );
-            } else {
-                showToast( "Failed to save scene" );
-            }
-        }
+    /** Fetches the scene list from IDBFS and rebuilds the dropdown. */
+    function refreshSceneList() {
+        callLuaAsync( "listScenes" ).then( function( scenes ) {
+            state.savedScenes = scenes || [];
+            rebuildSceneDropdown();
+        } ).catch( function() {
+            state.savedScenes = [];
+            rebuildSceneDropdown();
+        } );
     }
 
     /** Returns a Promise that resolves after the given number of milliseconds. */
@@ -3098,6 +4084,9 @@
                         await loadSavedEmitter( obj );
                     }
                 }
+                if ( obj.locked && state.selectedObjectId ) {
+                    callLua( "setObjectLocked", state.selectedObjectId, true );
+                }
                 await delay( 100 );
             }
         } else {
@@ -3112,6 +4101,9 @@
                 } else {
                     await loadSavedImage( imgDef );
                 }
+                if ( imgDef.locked && state.selectedObjectId ) {
+                    callLua( "setObjectLocked", state.selectedObjectId, true );
+                }
                 await delay( 100 );
             }
 
@@ -3121,6 +4113,9 @@
                     await loadPresetEmitter( emDef );
                 } else {
                     await loadSavedEmitter( emDef );
+                }
+                if ( emDef.locked && state.selectedObjectId ) {
+                    callLua( "setObjectLocked", state.selectedObjectId, true );
                 }
                 await delay( 100 );
             }
@@ -3137,39 +4132,58 @@
             return;
         }
 
-        if ( !confirm( "Loading a scene will replace all current objects. Continue?" ) ) return;
+        showConfirm( "Load scene", "Loading a scene will replace all current objects. Continue?" ).then( function( confirmed ) {
+            if ( !confirmed ) return;
 
+            callLua( "clearAllObjects" );
+            applySceneBackground( preset.backgroundColor || "#000000" );
+
+            loadSceneObjects( preset ).then( function() {
+                showToast( "Loaded scene: " + preset.name );
+            } );
+        } );
+    }
+
+    /** Loads the demo scene on first visit. Waits for presets if they haven't loaded yet. */
+    function loadFirstVisitDemo() {
+        var preset = SCENE_PRESETS[DEMO_SCENE_KEY];
+        if ( !preset ) {
+            // Presets not loaded yet; retry briefly
+            var attempts = 0;
+            var interval = setInterval( function() {
+                attempts++;
+                preset = SCENE_PRESETS[DEMO_SCENE_KEY];
+                if ( preset ) {
+                    clearInterval( interval );
+                    applyFirstVisitDemo( preset );
+                } else if ( attempts >= 20 ) {
+                    clearInterval( interval );
+                    hideIframeLoading();
+                }
+            }, 150 );
+            return;
+        }
+        applyFirstVisitDemo( preset );
+    }
+
+    /** Applies the demo scene without confirmation and marks first visit as handled. */
+    function applyFirstVisitDemo( preset ) {
+        localStorage.setItem( DEMO_LOADED_KEY, "1" );
         callLua( "clearAllObjects" );
         applySceneBackground( preset.backgroundColor || "#000000" );
 
         loadSceneObjects( preset ).then( function() {
-            showToast( "Loaded scene: " + preset.name );
+            hideIframeLoading();
         } );
     }
 
-    /** Captures the current scene state from Lua and saves it to localStorage under the given name. */
+    /** Saves the current scene to IDBFS under the given name. */
     function saveCustomScene( name ) {
-        callLuaAsync( "getSceneData" ).then( function( data ) {
-            if ( !data ) {
-                showToast( "No scene data to save" );
-                return;
-            }
-
-            var scene = {
-                name: name,
-                timestamp: Date.now(),
-                backgroundColor: localStorage.getItem( "bg-color" ) || "#000000",
-                objects: data.objects || [],
-            };
-
-            var scenes = getCustomScenes();
-            scenes[name] = scene;
-            saveCustomScenes( scenes );
-            rebuildSceneDropdown();
-
+        var bgColor = localStorage.getItem( "bg-color" ) || "#000000";
+        callLuaAsync( "saveScene", name, bgColor ).then( function() {
+            refreshSceneList();
             var select = document.getElementById( "scene-select" );
             if ( select ) select.value = PREFIX_CUSTOM + name;
-
             showToast( "Scene saved: " + name );
         } ).catch( function( err ) {
             console.error( "Save scene failed:", err );
@@ -3177,41 +4191,90 @@
         } );
     }
 
-    /** Clears all objects and loads a user-saved scene from localStorage. */
+    /** Clears all objects and loads a user-saved scene from IDBFS. */
     function loadCustomScene( sceneName ) {
-        var scenes = getCustomScenes();
-        var scene = scenes[sceneName];
-        if ( !scene ) {
-            showToast( "Scene not found" );
-            return;
-        }
-
-        if ( !confirm( "Loading a scene will replace all current objects. Continue?" ) ) return;
-
-        callLua( "clearAllObjects" );
-        applySceneBackground( scene.backgroundColor || "#000000" );
-
-        loadSceneObjects( scene ).then( function() {
-            showToast( "Loaded scene: " + sceneName );
+        showConfirm( "Load scene", "Loading a scene will replace all current objects. Continue?" ).then( function( confirmed ) {
+            if ( !confirmed ) return;
+            callLua( "loadScene", sceneName );
+            // Lua dispatches "sceneRestored" event, which triggers onSceneRestored
         } );
     }
 
-    /** Deletes a custom scene from localStorage and refreshes the dropdown. */
+    /** Deletes a custom scene from IDBFS and refreshes the dropdown. */
     function deleteCustomScene( sceneName ) {
-        var scenes = getCustomScenes();
-        delete scenes[sceneName];
-        saveCustomScenes( scenes );
-        rebuildSceneDropdown();
-        showToast( "Scene deleted: " + sceneName );
+        callLuaAsync( "deleteScene", sceneName ).then( function() {
+            refreshSceneList();
+            showToast( "Scene deleted: " + sceneName );
+        } );
     }
 
     // =========================================================================
-    // LOCAL STORAGE AUTO-SAVE
+    // STORAGE MIGRATION (one-time, localStorage -> IDBFS)
+    // =========================================================================
+
+    /** Migrates old localStorage data to IDBFS. Runs once, removes old keys on success. */
+    function migrateOldStorage() {
+        var autosave = localStorage.getItem( STORAGE_KEY );
+        var scenes = localStorage.getItem( SCENES_STORAGE_KEY );
+        var textures = localStorage.getItem( UPLOADED_IMAGES_KEY );
+
+        if ( !autosave && !scenes && !textures ) return Promise.resolve();
+
+        var promises = [];
+
+        if ( autosave ) {
+            try {
+                var autosaveData = JSON.parse( autosave );
+                promises.push( callLuaAsync( "migrateAutosave", autosaveData ) );
+            } catch ( e ) {
+                console.warn( "Migration: failed to parse autosave", e );
+            }
+        }
+
+        if ( scenes ) {
+            try {
+                var scenesObj = JSON.parse( scenes );
+                var sceneNames = Object.keys( scenesObj );
+                for ( var i = 0; i < sceneNames.length; i++ ) {
+                    promises.push( callLuaAsync( "migrateScene", sceneNames[i], scenesObj[sceneNames[i]] ) );
+                }
+            } catch ( e ) {
+                console.warn( "Migration: failed to parse scenes", e );
+            }
+        }
+
+        if ( textures ) {
+            try {
+                var textureArr = JSON.parse( textures );
+                for ( var j = 0; j < textureArr.length; j++ ) {
+                    var entry = textureArr[j];
+                    if ( entry.dataUrl && entry.file ) {
+                        var base64 = entry.dataUrl.replace( /^data:image\/[a-z+]+;base64,/, "" );
+                        promises.push( callLuaAsync( "migrateTexture", base64, entry.file, entry.label ) );
+                    }
+                }
+            } catch ( e ) {
+                console.warn( "Migration: failed to parse textures", e );
+            }
+        }
+
+        return Promise.all( promises ).then( function() {
+            localStorage.removeItem( STORAGE_KEY );
+            localStorage.removeItem( SCENES_STORAGE_KEY );
+            localStorage.removeItem( UPLOADED_IMAGES_KEY );
+            console.log( "Storage migration complete" );
+        } ).catch( function( err ) {
+            console.warn( "Storage migration failed (will retry next load):", err );
+        } );
+    }
+
+    // =========================================================================
+    // AUTO-SAVE (IDBFS)
     // =========================================================================
 
     var _autosaveIntervalId = null;
 
-    /** Starts the periodic auto-save timer that captures scene data to localStorage. */
+    /** Starts the periodic auto-save timer that writes scene data to IDBFS via Lua. */
     function setupAutoSave() {
         var toggle = document.getElementById( "toggle-autosave" );
 
@@ -3227,26 +4290,8 @@
             _autosaveIntervalId = setInterval( function() {
                 if ( document.hidden ) return;
                 if ( state.objects.length === 0 ) return;
-
-                callLuaAsync( "getSceneData" ).then( function( data ) {
-                    if ( !data ) return;
-
-                    var saveData = {
-                        version: 3,
-                        timestamp: Date.now(),
-                        objects: data.objects || [],
-                        backgroundColor: localStorage.getItem( "bg-color" ) || "#000000",
-                    };
-                    try {
-                        localStorage.setItem( STORAGE_KEY, JSON.stringify( saveData ) );
-                    } catch ( e ) {
-                        if ( e.name === "QuotaExceededError" || e.code === 22 ) {
-                            showToast( "Storage full — autosave failed. Try clearing old scenes." );
-                        }
-                    }
-                } ).catch( function( err ) {
-                    console.warn( "Autosave failed:", err );
-                } );
+                var bgColor = localStorage.getItem( "bg-color" ) || "#000000";
+                callLua( "saveAutosave", bgColor );
             }, AUTOSAVE_INTERVAL );
         }
 
@@ -3299,16 +4344,17 @@
                 showToast( "Scene is already empty" );
                 return;
             }
-            if ( !confirm( "Clear scene? This will remove all emitters and images." ) ) return;
-
-            state.objects.slice().forEach( function( obj ) {
-                if ( obj.type === TYPE_IMAGE ) {
-                    callLua( "removeImage", obj.id );
-                } else {
-                    callLua( "removeEmitter", obj.id );
-                }
+            showConfirm( "Clear scene", "This will remove all emitters and images.", { danger: true, confirmLabel: "Clear" } ).then( function( confirmed ) {
+                if ( !confirmed ) return;
+                state.objects.slice().forEach( function( obj ) {
+                    if ( obj.type === TYPE_IMAGE ) {
+                        callLua( "removeImage", obj.id );
+                    } else {
+                        callLua( "removeEmitter", obj.id );
+                    }
+                } );
+                showToast( "Scene cleared" );
             } );
-            showToast( "Scene cleared" );
         } );
     }
 
@@ -3341,34 +4387,21 @@
         } );
 
         btnConfirm.addEventListener( "click", function() {
+            callLua( "clearAllStorage" );
             localStorage.clear();
             location.reload();
         } );
     }
 
-    /** Checks localStorage for a previous session and prompts the user to restore it. */
+    /** Checks IDBFS for a previous autosave and prompts the user to restore it. */
     function checkAutoRestore() {
-        try {
-            var saved = localStorage.getItem( STORAGE_KEY );
-            if ( !saved ) return;
+        callLuaAsync( "hasAutosave" ).then( function( info ) {
+            if ( !info || !info.exists || info.objectCount === 0 ) return;
 
-            var saveData = JSON.parse( saved );
-            if ( !saveData ) return;
-
-            // Support v1 (just emitters array), v2 (emitters + images), v3 (unified objects)
-            var totalCount = 0;
-            if ( saveData.objects && saveData.objects.length ) {
-                totalCount = saveData.objects.length;
-            } else {
-                totalCount = ( ( saveData.emitters && saveData.emitters.length ) || 0 )
-                    + ( ( saveData.images && saveData.images.length ) || 0 );
-            }
-            if ( totalCount === 0 ) return;
-
-            var age = Date.now() - ( saveData.timestamp || 0 );
+            var age = Date.now() - ( info.timestamp || 0 );
             var TWO_DAYS = 48 * 60 * 60 * 1000;
             if ( age > TWO_DAYS ) {
-                localStorage.removeItem( STORAGE_KEY );
+                callLua( "deleteAutosave" );
                 return;
             }
 
@@ -3385,56 +4418,27 @@
                 timeLabel = minutes + " minute" + ( minutes !== 1 ? "s" : "" );
             }
 
-            var desc = totalCount + " object" + ( totalCount !== 1 ? "s" : "" );
-            if ( confirm( "Restore previous session from " + timeLabel + " ago? (" + desc + ")" ) ) {
-                callLua( "skipDefaultEmitter" );
-                state._pendingRestore = saveData;
-                if ( saveData.backgroundColor ) {
-                    localStorage.setItem( "bg-color", saveData.backgroundColor );
-                    var rgb = hexToRgb( saveData.backgroundColor );
-                    callLua( "setBackgroundColor", rgb.r, rgb.g, rgb.b );
-                    applyBackgroundColor( saveData.backgroundColor );
-                }
-            } else {
-                localStorage.removeItem( STORAGE_KEY );
-            }
-        } catch ( e ) {
-            console.warn( "Auto-restore check failed:", e );
-        }
-    }
-
-    /** Applies the pending restore data (if any) by clearing objects and loading the saved scene. */
-    function applyPendingRestore() {
-        if ( !state._pendingRestore ) return null;
-
-        var restoreData = state._pendingRestore;
-        state._pendingRestore = null;
-
-        // Support v1 (array of emitters), v2 (emitters + images), v3 (unified objects)
-        var sceneConfig;
-        if ( Array.isArray( restoreData ) ) {
-            sceneConfig = { emitters: restoreData, images: [] };
-        } else if ( restoreData.objects && restoreData.objects.length ) {
-            sceneConfig = { objects: restoreData.objects };
-        } else {
-            sceneConfig = { emitters: restoreData.emitters || [], images: restoreData.images || [] };
-        }
-
-        // Clear existing objects
-        if ( state.objects && state.objects.length > 0 ) {
-            state.objects.forEach( function( obj ) {
-                if ( obj.type === TYPE_IMAGE ) {
-                    callLua( "removeImage", obj.id );
+            var desc = info.objectCount + " object" + ( info.objectCount !== 1 ? "s" : "" );
+            showConfirm( "Restore session", "Restore previous session from " + timeLabel + " ago? (" + desc + ")", { confirmLabel: "Restore" } ).then( function( confirmed ) {
+                if ( confirmed ) {
+                    state._pendingRestore = true;
                 } else {
-                    callLua( "removeEmitter", obj.id );
+                    callLua( "deleteAutosave" );
                 }
             } );
-        }
-
-        var totalCount = sceneConfig.objects ? sceneConfig.objects.length : ( sceneConfig.emitters.length + sceneConfig.images.length );
-        return loadSceneObjects( sceneConfig ).then( function() {
-            showToast( "Session restored (" + totalCount + " object" + ( totalCount !== 1 ? "s" : "" ) + ")" );
+        } ).catch( function( err ) {
+            console.warn( "Auto-restore check failed:", err );
         } );
+    }
+
+    /** Applies the pending autosave restore by telling Lua to load it directly. */
+    function applyPendingRestore() {
+        if ( !state._pendingRestore ) return null;
+        state._pendingRestore = null;
+        callLua( "skipDefaultEmitter" );
+        callLua( "loadAutosave" );
+        // Lua dispatches "sceneRestored" event, which triggers onSceneRestored
+        return new Promise( function() {} ); // Never resolves; onSceneRestored handles UI
     }
 
     // =========================================================================
