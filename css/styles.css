@@ -1,4 +1,28 @@
 /* ============================================================================
+   FONTS
+   ============================================================================ */
+
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 300 400;
+    font-stretch: 100%;
+    font-display: swap;
+    src: url(fonts/roboto-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 300 400;
+    font-stretch: 100%;
+    font-display: swap;
+    src: url(fonts/roboto-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ============================================================================
    CSS RESET & BASE
    ============================================================================ */
 
@@ -14,7 +38,7 @@ html, body {
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Roboto', sans-serif;
     font-size: var(--font-base);
     color: var(--color-text-primary);
     background: var(--color-bg-primary);
@@ -54,22 +78,22 @@ body {
     --radius-md: calc(4px * var(--scale-factor));
     --radius-lg: calc(50% * var(--scale-factor));
 
-    --color-bg-primary: #1a1a1e;
-    --color-bg-secondary: #252529;
-    --color-bg-tertiary: #2d2d32;
-    --color-bg-input: #1e1e22;
-    --color-border: #3a3a40;
+    --color-bg-primary: #0E0E0E;
+    --color-bg-secondary: #141518;
+    --color-bg-tertiary: #1e1e22;
+    --color-bg-input: #111114;
+    --color-border: #282a36;
     --color-text-primary: #e0e0e0;
     --color-text-secondary: #b0b0b0;
     --color-text-muted: #888;
     --color-text-hint: #666;
-    --color-accent: #4a9eff;
-    --color-accent-hover: #6ab0ff;
-    --color-accent-active: #4aa0ff;
+    --color-accent: #FCBA04;
+    --color-accent-hover: #FFD040;
+    --color-accent-active: #E0A800;
     --color-danger: #ff4444;
     --color-danger-hover: #ff6666;
     --color-success: #4caf50;
-    --color-warning: #ff9800;
+    --color-warning: #be0019;
 }
 
 /* ============================================================================
@@ -199,7 +223,7 @@ body {
 }
 
 #sidebar-copyright a {
-    color: var(--color-text-secondary);
+    color: var(--color-accent);
     text-decoration: none;
 }
 
@@ -300,7 +324,7 @@ body {
     z-index: 5;
     width: 32px;
     height: 32px;
-    background: rgba(30, 30, 34, 0.85);
+    background: rgba(20, 21, 24, 0.9);
     color: var(--color-text-secondary);
     font-size: 18px;
     border-radius: 6px;
@@ -356,7 +380,7 @@ body {
     font-size: calc(10px * var(--header-scale));
     font-weight: 700;
     color: var(--color-warning);
-    background: rgba(255, 152, 0, 0.15);
+    background: rgba(190, 0, 25, 0.15);
     padding: 1px 6px;
     border-radius: 3px;
     margin-left: 6px;
@@ -402,8 +426,9 @@ body {
 
 .btn-primary {
     background: var(--color-accent);
-    color: #fff;
+    color: #141518;
     border-color: var(--color-accent);
+    font-weight: bold;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -411,13 +436,13 @@ body {
 }
 
 .btn-danger {
-    background: #3a2020;
-    color: #e74c3c;
-    border-color: #e74c3c;
+    background: #2a0008;
+    color: #be0019;
+    border-color: #be0019;
 }
 
 .btn-danger:hover:not(:disabled) {
-    background: #c0392b;
+    background: #be0019;
     color: #fff;
 }
 
@@ -702,7 +727,7 @@ body {
 }
 
 .object-type-badge.badge-image {
-    background: #20405a;
+    background: #1a2a3a;
     color: var(--color-accent-active);
 }
 
@@ -800,7 +825,7 @@ body {
 }
 
 .scene-btn-danger:hover:not(:disabled) {
-    background: #5a2020;
+    background: #3a0010;
     border-color: #883333;
 }
 
@@ -1368,13 +1393,13 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .texture-remove-btn {
-    background: #3a2020;
-    border-color: #5a3030;
+    background: #2a0008;
+    border-color: #3a0010;
     color: var(--color-text-primary);
 }
 
 .texture-remove-btn:hover {
-    background: #5a2020;
+    background: #3a0010;
     border-color: var(--color-danger);
     color: var(--color-danger);
 }
@@ -1419,25 +1444,24 @@ input[type="color"]::-webkit-color-swatch {
    ============================================================================ */
 
 ::-webkit-scrollbar {
-    width: 6px;
+    width: 0.5rem;
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--color-bg-primary);
+    background: #080808;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
+    background: #FCBA04;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #4a4a50;
+    background: #FFD040;
 }
 
 * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-border) var(--color-bg-primary);
+    scrollbar-color: #FCBA04 #080808;
 }
 
 /* ============================================================================
@@ -1615,13 +1639,13 @@ kbd {
 }
 
 .confirm-btn-danger {
-    background: #c0392b;
+    background: #be0019;
     color: #fff;
-    border-color: #c0392b;
+    border-color: #be0019;
 }
 
 .confirm-btn-danger:hover {
-    background: #a93226;
+    background: #9a0015;
 }
 
 /* confirm-btn-cancel: uses .btn defaults, no additional styles needed */
@@ -1658,7 +1682,7 @@ kbd {
     justify-content: center;
     gap: var(--spacing-md);
     padding: var(--spacing-md) var(--spacing-xl);
-    background: rgba(255, 152, 0, 0.15);
+    background: rgba(190, 0, 25, 0.15);
     border-bottom: 1px solid var(--color-warning);
     color: var(--color-warning);
     font-size: var(--font-small);
@@ -1711,7 +1735,7 @@ kbd {
     z-index: 15;
     width: 24px;
     height: 48px;
-    background: rgba(30, 30, 34, 0.85);
+    background: rgba(20, 21, 24, 0.9);
     color: var(--color-text-secondary);
     border: 1px solid var(--color-border);
     border-radius: 4px;
