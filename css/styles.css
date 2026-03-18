@@ -305,12 +305,12 @@ body {
     position: absolute;
     bottom: 8px;
     left: 8px;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.75);
     padding: 4px 10px;
     border-radius: 4px;
     pointer-events: none;
     font-size: var(--font-section-header);
-    color: var(--color-text-muted);
+    color: rgba(255, 255, 255, 0.9);
 }
 
 /* ============================================================================
@@ -379,8 +379,8 @@ body {
 .beta-tag {
     font-size: calc(10px * var(--header-scale));
     font-weight: 700;
-    color: var(--color-warning);
-    background: rgba(190, 0, 25, 0.15);
+    color: #ff4d4d;
+    background: rgba(190, 0, 25, 0.25);
     padding: 1px 6px;
     border-radius: 3px;
     margin-left: 6px;
@@ -437,8 +437,8 @@ body {
 
 .btn-danger {
     background: #2a0008;
-    color: #be0019;
-    border-color: #be0019;
+    color: #ff4d4d;
+    border-color: #cc2233;
 }
 
 .btn-danger:hover:not(:disabled) {
