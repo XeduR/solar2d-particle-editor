@@ -270,6 +270,7 @@ body {
     display: block;
     border: none;
     transform-origin: 0 0;
+    touch-action: none;
 }
 
 #iframe-loading-overlay {

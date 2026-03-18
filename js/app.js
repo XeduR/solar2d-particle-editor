@@ -3209,8 +3209,41 @@
                 }
             }, true );
 
-            // Mobile: pinch-zoom and two-finger pan inside the iframe
-            addTouchZoomPan( iframeDoc );
+            // Mobile: block touch events from Emscripten during two-finger gestures.
+            // Must use capture phase to intercept before Emscripten's handlers.
+            iframeDoc.addEventListener( "touchstart", function( e ) {
+                if ( e.touches.length >= 2 ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleTouchStart( e );
+                }
+            }, { capture: true, passive: false } );
+
+            iframeDoc.addEventListener( "touchmove", function( e ) {
+                if ( touchState.active ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleTouchMove( e );
+                }
+            }, { capture: true, passive: false } );
+
+            iframeDoc.addEventListener( "touchend", function( e ) {
+                if ( touchState.active ) {
+                    e.stopPropagation();
+                    handleTouchEnd( e );
+                }
+            }, { capture: true } );
+
+            iframeDoc.addEventListener( "touchcancel", function( e ) {
+                if ( touchState.active ) {
+                    e.stopPropagation();
+                    handleTouchEnd( e );
+                }
+            }, { capture: true } );
+
+            // Prevent native touch gestures inside the iframe
+            iframeDoc.documentElement.style.touchAction = "none";
+            if ( iframeDoc.body ) iframeDoc.body.style.touchAction = "none";
         } );
 
         // Parent document listeners: handle pan when cursor leaves the iframe
