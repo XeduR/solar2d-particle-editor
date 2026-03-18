@@ -266,10 +266,6 @@ function M.deselectImage()
     activeImageId = nil
 end
 
-function M.getActiveImageId()
-    return activeImageId
-end
-
 function M.renameImage( id, name )
     if not images[id] then return false end
     images[id].name = name
@@ -317,21 +313,6 @@ function M.getProperties( id )
         scale = data.scale,
         opacity = data.opacity,
     }
-end
-
-function M.getImageList()
-    local list = {}
-    for _, id in ipairs( imageOrder ) do
-        local data = images[id]
-        if data then
-            list[#list + 1] = {
-                id = id,
-                name = data.name,
-                selected = ( id == activeImageId ),
-            }
-        end
-    end
-    return list
 end
 
 function M.getDisplayObject( id )

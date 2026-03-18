@@ -2,7 +2,6 @@
 -- emitterManager.lua
 ---------------------------------------------------------------------------------
 
-local json = require( "json" )
 local screen = require( "classes.screen" )
 local utils = require( "classes.utils" )
 local deepCopy = utils.deepCopy
@@ -78,10 +77,6 @@ local defaultParams = {
     blendFuncDestination = 1, -- GL_ONE (additive blending)
     textureFileName = "assets/particles/basic_circle_01.png",
 }
-
-function M.getDefaultParams()
-    return deepCopy( defaultParams )
-end
 
 local function generateId()
     idCounter = idCounter + 1
@@ -459,26 +454,6 @@ function M.setEmitterPosition( id, x, y )
     return true
 end
 
-function M.show()
-    isVisible = true
-    for _, id in ipairs( emitterOrder ) do
-        local data = emitters[id]
-        if data and data.emitter then
-            data.emitter.isVisible = true
-        end
-    end
-end
-
-function M.hide()
-    isVisible = false
-    for _, id in ipairs( emitterOrder ) do
-        local data = emitters[id]
-        if data and data.emitter then
-            data.emitter.isVisible = false
-        end
-    end
-end
-
 function M.pauseEmitters()
     isPaused = true
     cancelAllReplayTimers()
@@ -509,10 +484,6 @@ function M.restartEmitters()
     for _, id in ipairs( emitterOrder ) do
         recreateEmitter( id )
     end
-end
-
-function M.isPaused()
-    return isPaused
 end
 
 function M.reorderEmitter( id, newIndex )
@@ -591,6 +562,7 @@ function M.restoreState( state )
 
     emitterOrder = deepCopy( state.order )
     activeEmitterId = state.activeId
+    isVisible = state.isVisible ~= false
 
     for _, id in ipairs( emitterOrder ) do
         local savedData = state.emitters[id]
@@ -622,12 +594,6 @@ function M.restoreState( state )
                 idCounter = numPart
             end
         end
-    end
-
-    if state.isVisible == false then
-        M.hide()
-    else
-        isVisible = true
     end
 
     if state.isPaused then

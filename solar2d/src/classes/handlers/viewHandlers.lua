@@ -135,18 +135,6 @@ function M.create( deps )
         parentReady = function()
             deps.sendReady()
         end,
-
-        -- Removes all temporary image files from system.TemporaryDirectory
-        clearTempFiles = function()
-            local lfs = require( "lfs" )
-            local tempPath = system.pathForFile( "", system.TemporaryDirectory )
-            if not tempPath then return end
-            for file in lfs.dir( tempPath ) do
-                if file ~= "." and file ~= ".." then
-                    os.remove( system.pathForFile( file, system.TemporaryDirectory ) )
-                end
-            end
-        end,
     }
 end
 

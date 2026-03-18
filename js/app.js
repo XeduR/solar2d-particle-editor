@@ -310,12 +310,6 @@
             case "objectSelected":
                 onObjectSelected( data );
                 break;
-            case "emitterListChanged":
-                onObjectListChanged( { objects: data.emitters } );
-                break;
-            case "emitterSelected":
-                onObjectSelected( { id: data.id, type: TYPE_EMITTER, name: data.name, params: data.params, textureInfo: data.textureInfo } );
-                break;
             case "historyChanged":
                 onHistoryChanged( data );
                 break;
@@ -333,8 +327,6 @@
                 break;
             case "clearLocalStorage":
                 localStorage.clear();
-                break;
-            case "panChanged":
                 break;
         }
     } );

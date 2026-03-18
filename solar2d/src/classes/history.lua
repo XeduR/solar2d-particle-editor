@@ -76,13 +76,6 @@ function M.canRedo()
     return currentIndex < #states
 end
 
-function M.getCurrent()
-    if currentIndex < 1 or currentIndex > #states then
-        return nil
-    end
-    return deepCopy( states[currentIndex].state )
-end
-
 function M.clear()
     states = {}
     currentIndex = 0
@@ -115,15 +108,6 @@ function M.notifyChange()
             redoDescription = redoEntry and redoEntry.description or nil,
         })
     end
-end
-
-function M.getStats()
-    return {
-        totalStates = #states,
-        currentIndex = currentIndex,
-        canUndo = M.canUndo(),
-        canRedo = M.canRedo(),
-    }
 end
 
 return M

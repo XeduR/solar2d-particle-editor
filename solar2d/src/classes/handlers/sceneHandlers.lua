@@ -117,38 +117,6 @@ function M.create( deps )
             history.clear()
             history.push( deps.getFullState(), "Clear all objects" )
         end,
-
-        -- Backward-compatible alias for selectObject with type="emitter"
-        selectEmitter = function( id )
-            local success = emitterManager.selectEmitter( id )
-            if success then
-                deps.selectObject( id, "emitter" )
-                deps.dispatchObjectSelected()
-            end
-            return success
-        end,
-
-        -- Backward-compatible alias for renameObject with type="emitter"
-        renameEmitter = function( id, name )
-            local success = emitterManager.renameEmitter( id, name )
-            if success then
-                history.push( deps.getFullState(), "Rename emitter" )
-                deps.dispatchObjectListChanged()
-            end
-            return success
-        end,
-
-        -- Backward-compatible alias for reorderObject
-        reorderEmitter = function( id, newIndex )
-            newIndex = tonumber( newIndex )
-            if not id or not newIndex then return end
-
-            local success = deps.reorderObject( id, newIndex )
-            if success then
-                deps.dispatchObjectListChanged()
-                history.push( deps.getFullState(), "Reorder emitter" )
-            end
-        end,
     }
 end
 

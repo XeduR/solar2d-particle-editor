@@ -697,6 +697,10 @@ if jsBridge then
     for k, v in pairs( sceneH ) do allHandlers[k] = v end
     for k, v in pairs( viewH ) do allHandlers[k] = v end
 
+    -- Expose sceneH functions to deps so storageHandlers can reuse them
+    deps.getSceneData = sceneH.getSceneData
+    deps.clearAllObjects = sceneH.clearAllObjects
+
     jsBridge.init( allHandlers )
 
     -- IDBFS mounts asynchronously on HTML5, so system.DocumentsDirectory

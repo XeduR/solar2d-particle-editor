@@ -149,26 +149,6 @@ function M.create( deps )
         setEmitterPosition = function( id, x, y )
             return emitterManager.setEmitterPosition( id, tonumber( x ), tonumber( y ) )
         end,
-
-        -- getEmitterList() - Returns the list of all emitters.
-        getEmitterList = function()
-            return emitterManager.getEmitterList()
-        end,
-
-        -- getEmitterParams( id ) - Returns parameter values for a specific emitter.
-        getEmitterParams = function( id )
-            return emitterManager.getParams( id )
-        end,
-
-        -- getTextureInfo( id ) - Returns texture info (filename, base64) for an emitter.
-        getTextureInfo = function( id )
-            return emitterManager.getTextureInfo( id )
-        end,
-
-        -- getTemplateList() - Returns the list of available templates.
-        getTemplateList = function()
-            return templates.getList()
-        end,
     }
 end
 
