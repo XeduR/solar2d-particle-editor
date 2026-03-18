@@ -2996,10 +2996,16 @@
     }
 
     // ---- Touch (mobile) pinch-zoom & two-finger pan ----
-    // Uses absolute (non-incremental) math: every touchmove recomputes the
-    // full transform from the gesture's start state, avoiding feedback loops.
+    // Detects whether the user intends to zoom or pan from the initial gesture,
+    // then locks to that mode for the duration of the two-finger touch.
+    var TOUCH_MODE_UNDECIDED = 0;
+    var TOUCH_MODE_ZOOM = 1;
+    var TOUCH_MODE_PAN = 2;
+    var TOUCH_DECIDE_THRESHOLD = 8;
+
     var touchState = {
         active: false,
+        mode: TOUCH_MODE_UNDECIDED,
         startDist: 0,
         startZoom: 1,
         startMidX: 0,
@@ -3007,7 +3013,9 @@
         startTx: 0,
         startTy: 0,
         anchorX: 0,
-        anchorY: 0
+        anchorY: 0,
+        containerLeft: 0,
+        containerTop: 0
     };
 
     function getTouchDistance( t1, t2 ) {
@@ -3030,13 +3038,13 @@
         var rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
 
         touchState.active = true;
+        touchState.mode = TOUCH_MODE_UNDECIDED;
         touchState.startDist = dist;
         touchState.startZoom = cssZoom;
         touchState.startMidX = midX;
         touchState.startMidY = midY;
         touchState.startTx = cssTx;
         touchState.startTy = cssTy;
-        // Iframe-local point under the initial midpoint (zoom anchor)
         touchState.anchorX = ( midX - rect.left - cssTx ) / cssZoom;
         touchState.anchorY = ( midY - rect.top - cssTy ) / cssZoom;
         touchState.containerLeft = rect.left;
@@ -3052,14 +3060,45 @@
         var midY = ( t1.clientY + t2.clientY ) / 2;
         var dist = getTouchDistance( t1, t2 );
 
-        // Zoom: ratio of current distance to start distance
-        var newZoom = touchState.startZoom * ( dist / touchState.startDist );
-        newZoom = Math.max( CSS_MIN_ZOOM, Math.min( CSS_MAX_ZOOM, newZoom ) );
+        var distDelta = Math.abs( dist - touchState.startDist );
+        var midDeltaX = midX - touchState.startMidX;
+        var midDeltaY = midY - touchState.startMidY;
+        var midDelta = Math.sqrt( midDeltaX * midDeltaX + midDeltaY * midDeltaY );
 
-        // Combined pan + zoom-anchor: place the anchor point under the current midpoint
-        cssTx = midX - touchState.containerLeft - touchState.anchorX * newZoom;
-        cssTy = midY - touchState.containerTop - touchState.anchorY * newZoom;
-        cssZoom = newZoom;
+        // Decide mode from the first significant movement
+        if ( touchState.mode === TOUCH_MODE_UNDECIDED ) {
+            if ( distDelta < TOUCH_DECIDE_THRESHOLD && midDelta < TOUCH_DECIDE_THRESHOLD ) return;
+            touchState.mode = distDelta > midDelta ? TOUCH_MODE_ZOOM : TOUCH_MODE_PAN;
+
+            // Re-anchor from current position so the first applied frame has zero delta
+            if ( touchState.mode === TOUCH_MODE_PAN ) {
+                touchState.startMidX = midX;
+                touchState.startMidY = midY;
+                touchState.startTx = cssTx;
+                touchState.startTy = cssTy;
+            } else {
+                touchState.startDist = dist;
+                touchState.startZoom = cssZoom;
+                var container = document.getElementById( "canvas-container" );
+                var rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+                touchState.anchorX = ( midX - rect.left - cssTx ) / cssZoom;
+                touchState.anchorY = ( midY - rect.top - cssTy ) / cssZoom;
+                touchState.containerLeft = rect.left;
+                touchState.containerTop = rect.top;
+            }
+            return;
+        }
+
+        if ( touchState.mode === TOUCH_MODE_ZOOM ) {
+            var newZoom = touchState.startZoom * ( dist / touchState.startDist );
+            newZoom = Math.max( CSS_MIN_ZOOM, Math.min( CSS_MAX_ZOOM, newZoom ) );
+            cssTx = midX - touchState.containerLeft - touchState.anchorX * newZoom;
+            cssTy = midY - touchState.containerTop - touchState.anchorY * newZoom;
+            cssZoom = newZoom;
+        } else {
+            cssTx = touchState.startTx + ( midX - touchState.startMidX );
+            cssTy = touchState.startTy + ( midY - touchState.startMidY );
+        }
 
         applyCssZoom();
     }
@@ -3067,6 +3106,7 @@
     function handleTouchEnd( e ) {
         if ( e.touches.length < 2 ) {
             touchState.active = false;
+            touchState.mode = TOUCH_MODE_UNDECIDED;
         }
     }
 
