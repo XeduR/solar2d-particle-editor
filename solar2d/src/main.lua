@@ -5,13 +5,28 @@
 display.setStatusBar( display.HiddenStatusBar )
 display.setDefault( "background", 0 )
 
-local platform = system.getInfo( "platform" )
-local isHTML5 = ( platform == "html5" )
+local jsBridge, printToBrowser
 
--- Manifests are generated at build time in Simulator so the HTML5 build
--- can fetch them at runtime (HTML5 has no filesystem access).
-if not isHTML5 then
+-- Set up browser logging first to catch any possible errors.
+if system.getInfo( "platform" ) == "html5" then
+    jsBridge = require( "classes.jsBridge" )
+    printToBrowser = require( "printToBrowser" )
+
+    -- Override the standard print function.
+    local _print = print
+
+    function _G.print( ... )
+        printToBrowser.log( ... )
+        _print( ... )
+    end
+
+    -- TODO?
+    -- Add a custom error handler and push errors to printToBrowser.alert?
+
+else
+    -- Generate asset manifests on simulator, so they're ready for HTML5 builds.
     require( "classes.manifestGenerator" )
+
 end
 
 local screen = require( "classes.screen" )
@@ -21,11 +36,6 @@ local emitterManager = require( "classes.emitterManager" )
 local imageManager = require( "classes.imageManager" )
 local history = require( "classes.history" )
 local templates = require( "classes.templates" )
-
-local jsBridge
-if isHTML5 then
-    jsBridge = require( "classes.jsBridge" )
-end
 
 ---------------------------------------------------------------------------------
 -- Canvas Setup
@@ -670,23 +680,72 @@ if jsBridge then
         getCanvasGroup = function() return groupObjects end,
     }
 
+    ---------------------------------------------------------------------------------
+    -- Initialization
+    ---------------------------------------------------------------------------------
+
+    print( "Initialising handlers..." )
+
     local emitterH = require( "classes.handlers.emitterHandlers" ).create( deps )
     local imageH = require( "classes.handlers.imageHandlers" ).create( deps )
     local sceneH = require( "classes.handlers.sceneHandlers" ).create( deps )
     local viewH = require( "classes.handlers.viewHandlers" ).create( deps )
-    local storageH = require( "classes.handlers.storageHandlers" ).create( deps )
 
     local allHandlers = {}
     for k, v in pairs( emitterH ) do allHandlers[k] = v end
     for k, v in pairs( imageH ) do allHandlers[k] = v end
     for k, v in pairs( sceneH ) do allHandlers[k] = v end
     for k, v in pairs( viewH ) do allHandlers[k] = v end
-    for k, v in pairs( storageH ) do allHandlers[k] = v end
 
     jsBridge.init( allHandlers )
 
-    -- Fallback if parent page's postMessage never arrives
-    timer.performWithDelay( 300, sendReady )
+    -- IDBFS mounts asynchronously on HTML5, so system.DocumentsDirectory
+    -- is nil until the sync callback fires. Poll until it's available.
+    local fileStorage = require( "classes.fileStorage" )
+    local storageRetries = 0
+    local MAX_STORAGE_RETRIES = 100 -- ~5 seconds at 50ms intervals
+
+    local function initStorage()
+        if not fileStorage.isReady() then
+            storageRetries = storageRetries + 1
+            if storageRetries <= MAX_STORAGE_RETRIES then
+                timer.performWithDelay( 50, initStorage )
+                return
+            end
+            print( "\tStorage unavailable: IDBFS did not initialise in time." )
+            sendReady()
+            return
+        end
+
+        print( "\tStorage ready after " .. ( storageRetries * 50 ) .. "ms." )
+
+        local ok, err = pcall( function()
+            local storageH = require( "classes.handlers.storageHandlers" ).create( deps )
+            for k, v in pairs( storageH ) do allHandlers[k] = v end
+        end )
+
+        if not ok then
+            print( "\tStorage error: " .. tostring( err ) )
+            print( "\tWiping corrupted storage..." )
+            pcall( function()
+                fileStorage.delete( "autosave.json" )
+                fileStorage.delete( "textures.json" )
+                local sceneFiles = fileStorage.listDir( "scenes" )
+                for i = 1, #sceneFiles do
+                    fileStorage.delete( "scenes/" .. sceneFiles[i] )
+                end
+                local textureFiles = fileStorage.listDir( "textures" )
+                for i = 1, #textureFiles do
+                    fileStorage.delete( "textures/" .. textureFiles[i] )
+                end
+            end )
+            jsBridge.dispatchEvent( "clearLocalStorage", {} )
+        end
+
+        sendReady()
+    end
+
+    initStorage()
 else
     showPlatformWarning()
 end

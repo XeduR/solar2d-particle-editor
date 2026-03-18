@@ -157,9 +157,9 @@ end
 -- Public functions
 
 function M.create( deps )
-	-- Ensure storage directories exist on init
-	fileStorage.ensureDir( SCENES_DIR )
-	fileStorage.ensureDir( TEXTURES_DIR )
+	-- Ensure storage directories exist on init (pcall guards against corrupt IDBFS state)
+	pcall( fileStorage.ensureDir, SCENES_DIR )
+	pcall( fileStorage.ensureDir, TEXTURES_DIR )
 
 	-- Wrap deps.getSceneData if it doesn't exist directly (it's in sceneHandlers)
 	local getSceneData = deps.getSceneData
@@ -348,46 +348,6 @@ function M.create( deps )
 			local binaryData = fileStorage.readBinary( TEXTURES_DIR .. "/" .. filename )
 			if not binaryData then return nil end
 			return utils.base64Encode( binaryData )
-		end,
-
-		----------------------------------------------------------------
-		-- Migration (one-time, from old localStorage data)
-		----------------------------------------------------------------
-
-		migrateAutosave = function( data )
-			if not data then return false end
-			return fileStorage.writeJSON( AUTOSAVE_FILE, data )
-		end,
-
-		migrateScene = function( name, data )
-			if not name or not data then return false end
-			local path = sceneFilePath( name )
-			if not path then return false end
-			data.name = data.name or name
-			return fileStorage.writeJSON( path, data )
-		end,
-
-		migrateTexture = function( base64, filename, label )
-			if not base64 or not filename then return false end
-			base64 = base64:gsub( "^data:image/[%w+]+;base64,", "" )
-			local binaryData = utils.base64Decode( base64 )
-			if not binaryData or #binaryData == 0 then return false end
-
-			fileStorage.writeBinary( TEXTURES_DIR .. "/" .. filename, binaryData )
-
-			local manifest = getTextureManifest()
-			local found = false
-			for i = 1, #manifest do
-				if manifest[i].file == filename then
-					found = true
-					break
-				end
-			end
-			if not found then
-				manifest[#manifest + 1] = { label = label or filename, file = filename }
-				saveTextureManifest( manifest )
-			end
-			return true
 		end,
 
 		clearAllStorage = function()

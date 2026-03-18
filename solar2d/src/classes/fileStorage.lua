@@ -9,7 +9,6 @@ local M = {}
 -- Forward declarations & variables
 
 local pathForFile = system.pathForFile
-local docsDir = system.DocumentsDirectory
 
 --------------------------------------------------------------------------------------
 -- Private functions
@@ -25,11 +24,17 @@ end
 local function resolvePath( relativePath )
 	relativePath = sanitize( relativePath )
 	if relativePath == "" then return nil end
+	local docsDir = system.DocumentsDirectory
+	if not docsDir then return nil end
 	return pathForFile( relativePath, docsDir )
 end
 
 --------------------------------------------------------------------------------------
 -- Public functions
+
+function M.isReady()
+	return system.DocumentsDirectory ~= nil
+end
 
 function M.writeJSON( relativePath, t )
 	local path = resolvePath( relativePath )
@@ -93,6 +98,8 @@ end
 
 function M.listDir( relativePath )
 	relativePath = sanitize( relativePath or "" )
+	local docsDir = system.DocumentsDirectory
+	if not docsDir then return {} end
 	local path
 	if relativePath == "" then
 		path = pathForFile( "", docsDir )
@@ -115,6 +122,8 @@ end
 function M.ensureDir( relativePath )
 	relativePath = sanitize( relativePath or "" )
 	if relativePath == "" then return true end
+	local docsDir = system.DocumentsDirectory
+	if not docsDir then return false end
 	local path = pathForFile( "", docsDir )
 	if not path then return false end
 	local fullPath = path .. "/" .. relativePath

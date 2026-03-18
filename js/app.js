@@ -104,9 +104,6 @@
     var TYPE_EMITTER = "emitter";
     var TYPE_IMAGE = "image";
     var CALLLUA_TIMEOUT = 5000;
-    var STORAGE_KEY = "solar2d-particle-editor-state";
-    var SCENES_STORAGE_KEY = "solar2d-particle-editor-scenes";
-    var UPLOADED_IMAGES_KEY = "solar2d-particle-editor-uploaded-images";
     var AUTOSAVE_INTERVAL = 15000; // 15 seconds
     var DEMO_SCENE_KEY = "fantasy";
     var DEMO_LOADED_KEY = "solar2d-particle-editor-demo-loaded";
@@ -334,6 +331,9 @@
             case "callLuaResponse":
                 onCallLuaResponse( data );
                 break;
+            case "clearLocalStorage":
+                localStorage.clear();
+                break;
             case "panChanged":
                 break;
         }
@@ -372,21 +372,46 @@
         setupAutoSave();
         restoreBackgroundToLua();
 
-        migrateOldStorage().then( function() {
-            var restorePromise = applyPendingRestore();
-            if ( restorePromise ) {
+        callLuaAsync( "hasAutosave" ).then( function( info ) {
+            if ( info && info.exists && info.objectCount > 0 ) {
+                var age = Date.now() - ( info.timestamp || 0 );
+                var TWO_DAYS = 48 * 60 * 60 * 1000;
+                if ( age > TWO_DAYS ) {
+                    callLua( "deleteAutosave" );
+                    return false;
+                }
+
+                var minutes = Math.round( age / 60000 );
+                var hours = Math.floor( age / 3600000 );
+                var timeLabel;
+                if ( hours >= 24 ) {
+                    timeLabel = "yesterday";
+                } else if ( hours >= 1 ) {
+                    timeLabel = hours + " hour" + ( hours !== 1 ? "s" : "" );
+                } else if ( minutes < 1 ) {
+                    timeLabel = "less than a minute";
+                } else {
+                    timeLabel = minutes + " minute" + ( minutes !== 1 ? "s" : "" );
+                }
+
+                var desc = info.objectCount + " object" + ( info.objectCount !== 1 ? "s" : "" );
+                return showConfirm( "Restore session", "Restore previous session from " + timeLabel + " ago? (" + desc + ")", { confirmLabel: "Restore" } );
+            }
+            return false;
+        } ).then( function( confirmed ) {
+            if ( confirmed ) {
+                callLua( "loadAutosave" );
                 // onSceneRestored will call hideIframeLoading
+            } else if ( !localStorage.getItem( DEMO_LOADED_KEY ) ) {
+                loadFirstVisitDemo();
             } else {
-                callLuaAsync( "hasAutosave" ).then( function( info ) {
-                    if ( ( !info || !info.exists ) && !localStorage.getItem( DEMO_LOADED_KEY ) ) {
-                        loadFirstVisitDemo();
-                    } else {
-                        hideIframeLoading();
-                    }
-                } );
+                hideIframeLoading();
             }
             refreshSceneList();
             refreshTextureList();
+        } ).catch( function( err ) {
+            console.warn( "Auto-restore failed:", err );
+            hideIframeLoading();
         } );
 
         // Apply saved guide settings to Lua
@@ -836,7 +861,6 @@
         setupPanelToggles();
         setupToolbarLayout();
         setupToolbarToggle();
-        checkAutoRestore();
         fetchAssetManifests();
     }
 
@@ -3760,9 +3784,9 @@
         } );
 
         const loadTimeout = setTimeout( function() {
-            const spinner = overlay.querySelector( ".loading-spinner" );
+            var spinner = overlay.querySelector( ".loading-spinner" );
             if ( spinner ) spinner.style.display = "none";
-            const msg = overlay.querySelector( "p" );
+            var msg = overlay.querySelector( "p" );
             if ( msg ) {
                 msg.textContent = "Failed to load Solar2D engine. Check that solar2d/bin/ contains the build files.";
                 msg.style.color = "#ff6666";
@@ -4209,66 +4233,6 @@
     }
 
     // =========================================================================
-    // STORAGE MIGRATION (one-time, localStorage -> IDBFS)
-    // =========================================================================
-
-    /** Migrates old localStorage data to IDBFS. Runs once, removes old keys on success. */
-    function migrateOldStorage() {
-        var autosave = localStorage.getItem( STORAGE_KEY );
-        var scenes = localStorage.getItem( SCENES_STORAGE_KEY );
-        var textures = localStorage.getItem( UPLOADED_IMAGES_KEY );
-
-        if ( !autosave && !scenes && !textures ) return Promise.resolve();
-
-        var promises = [];
-
-        if ( autosave ) {
-            try {
-                var autosaveData = JSON.parse( autosave );
-                promises.push( callLuaAsync( "migrateAutosave", autosaveData ) );
-            } catch ( e ) {
-                console.warn( "Migration: failed to parse autosave", e );
-            }
-        }
-
-        if ( scenes ) {
-            try {
-                var scenesObj = JSON.parse( scenes );
-                var sceneNames = Object.keys( scenesObj );
-                for ( var i = 0; i < sceneNames.length; i++ ) {
-                    promises.push( callLuaAsync( "migrateScene", sceneNames[i], scenesObj[sceneNames[i]] ) );
-                }
-            } catch ( e ) {
-                console.warn( "Migration: failed to parse scenes", e );
-            }
-        }
-
-        if ( textures ) {
-            try {
-                var textureArr = JSON.parse( textures );
-                for ( var j = 0; j < textureArr.length; j++ ) {
-                    var entry = textureArr[j];
-                    if ( entry.dataUrl && entry.file ) {
-                        var base64 = entry.dataUrl.replace( /^data:image\/[a-z+]+;base64,/, "" );
-                        promises.push( callLuaAsync( "migrateTexture", base64, entry.file, entry.label ) );
-                    }
-                }
-            } catch ( e ) {
-                console.warn( "Migration: failed to parse textures", e );
-            }
-        }
-
-        return Promise.all( promises ).then( function() {
-            localStorage.removeItem( STORAGE_KEY );
-            localStorage.removeItem( SCENES_STORAGE_KEY );
-            localStorage.removeItem( UPLOADED_IMAGES_KEY );
-            console.log( "Storage migration complete" );
-        } ).catch( function( err ) {
-            console.warn( "Storage migration failed (will retry next load):", err );
-        } );
-    }
-
-    // =========================================================================
     // AUTO-SAVE (IDBFS)
     // =========================================================================
 
@@ -4393,53 +4357,6 @@
         } );
     }
 
-    /** Checks IDBFS for a previous autosave and prompts the user to restore it. */
-    function checkAutoRestore() {
-        callLuaAsync( "hasAutosave" ).then( function( info ) {
-            if ( !info || !info.exists || info.objectCount === 0 ) return;
-
-            var age = Date.now() - ( info.timestamp || 0 );
-            var TWO_DAYS = 48 * 60 * 60 * 1000;
-            if ( age > TWO_DAYS ) {
-                callLua( "deleteAutosave" );
-                return;
-            }
-
-            var minutes = Math.round( age / 60000 );
-            var hours = Math.floor( age / 3600000 );
-            var timeLabel;
-            if ( hours >= 24 ) {
-                timeLabel = "yesterday";
-            } else if ( hours >= 1 ) {
-                timeLabel = hours + " hour" + ( hours !== 1 ? "s" : "" );
-            } else if ( minutes < 1 ) {
-                timeLabel = "less than a minute";
-            } else {
-                timeLabel = minutes + " minute" + ( minutes !== 1 ? "s" : "" );
-            }
-
-            var desc = info.objectCount + " object" + ( info.objectCount !== 1 ? "s" : "" );
-            showConfirm( "Restore session", "Restore previous session from " + timeLabel + " ago? (" + desc + ")", { confirmLabel: "Restore" } ).then( function( confirmed ) {
-                if ( confirmed ) {
-                    state._pendingRestore = true;
-                } else {
-                    callLua( "deleteAutosave" );
-                }
-            } );
-        } ).catch( function( err ) {
-            console.warn( "Auto-restore check failed:", err );
-        } );
-    }
-
-    /** Applies the pending autosave restore by telling Lua to load it directly. */
-    function applyPendingRestore() {
-        if ( !state._pendingRestore ) return null;
-        state._pendingRestore = null;
-        callLua( "skipDefaultEmitter" );
-        callLua( "loadAutosave" );
-        // Lua dispatches "sceneRestored" event, which triggers onSceneRestored
-        return new Promise( function() {} ); // Never resolves; onSceneRestored handles UI
-    }
 
     // =========================================================================
     // UTILITIES
