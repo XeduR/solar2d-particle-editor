@@ -45,7 +45,7 @@
 <body>
     <div id="app">
         <div id="small-viewport-banner" role="alert">
-            <span>This editor is designed for desktop browsers. Some features may not work well on small screens.</span>
+            <span>For the best experience, use this editor on a desktop with a larger screen.</span>
             <button id="dismiss-viewport-banner" aria-label="Dismiss banner">&times;</button>
         </div>
         <header id="header">
@@ -58,8 +58,8 @@
                     <button id="btn-undo" class="btn icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#x27F2;</button>
                     <button id="btn-redo" class="btn icon-btn" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#x27F3;</button>
                     <span class="header-separator"></span>
-                    <button id="btn-pause" class="btn icon-btn" title="Pause" aria-label="Pause">&#x23F8;</button>
-                    <button id="btn-play" class="btn icon-btn" title="Play" aria-label="Play" style="display:none;">&#x25B6;</button>
+                    <button id="btn-pause" class="btn icon-btn" title="Pause" aria-label="Pause">&#x23F8;&#xFE0E;</button>
+                    <button id="btn-play" class="btn icon-btn" title="Play" aria-label="Play" style="display:none;">&#x25B6;&#xFE0E;</button>
                     <button id="btn-restart" class="btn icon-btn" title="Restart" aria-label="Restart">&#x21BB;</button>
                     <span class="header-separator"></span>
                     <button id="btn-reset-position" class="btn icon-btn" title="Reset Position" aria-label="Reset Position">&#x2295;</button>
@@ -148,15 +148,16 @@
                 </div>
             </aside>
 
+            <button id="btn-toggle-left" class="btn panel-toggle panel-toggle-left" title="Toggle left panel" aria-label="Toggle left panel">&#x25C0;&#xFE0E;</button>
+            <button id="btn-toggle-right" class="btn panel-toggle panel-toggle-right" title="Toggle right panel" aria-label="Toggle right panel">&#x25B6;&#xFE0E;</button>
             <div id="canvas-container">
-                <button id="btn-toggle-left" class="btn panel-toggle panel-toggle-left" title="Toggle left panel" aria-label="Toggle left panel">&#x25C0;</button>
-                <button id="btn-toggle-right" class="btn panel-toggle panel-toggle-right" title="Toggle right panel" aria-label="Toggle right panel">&#x25B6;</button>
                 <!-- Solar2D HTML5 build runs inside this iframe; parent communicates via postMessage -->
                 <iframe id="solar2d-iframe" src="solar2d/bin/index.html"></iframe>
                 <div id="canvas-overlay">
-                    <p>Drag to move &middot; Scroll to zoom &middot; Right-drag to pan</p>
+                    <p id="overlay-desktop"><img src="css/mouse.svg" alt="" class="overlay-mouse-icon"> &middot; Left-drag to move objects &middot; Scroll to zoom &middot; Right-drag to pan</p>
+                    <p id="overlay-mobile" style="display:none;">Drag to move &middot; Pinch to zoom &middot; Two-finger drag to pan</p>
                 </div>
-                <button id="btn-canvas-settings" class="btn canvas-settings-btn" title="Visual Settings" aria-label="Visual Settings">&#x2699;</button>
+                <button id="btn-canvas-settings" class="btn canvas-settings-btn" title="Visual Settings" aria-label="Visual Settings">&#x2699;&#xFE0E;</button>
                 <div id="canvas-settings-popover" class="canvas-settings-popover" style="display:none;">
                     <h3>Visual Settings</h3>
                     <label class="checkbox-row">
@@ -211,7 +212,7 @@
                     </div>
                     <section class="param-section collapsed">
                         <div class="section-header" data-toggle="general" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>General</h3>
                         </div>
                         <div class="section-content" id="section-general" style="display:none;">
@@ -250,7 +251,7 @@
 
                     <section class="param-section">
                         <div class="section-header" data-toggle="emission" role="button" aria-expanded="true">
-                            <span class="toggle-icon">&#x25BC;</span>
+                            <span class="toggle-icon">&#x25BC;&#xFE0E;</span>
                             <h3>Emission</h3>
                         </div>
                         <div class="section-content" id="section-emission">
@@ -290,7 +291,7 @@
                     <!-- Toggled by emitterType: gravity (0) vs radial (1) -->
                     <section class="param-section collapsed" id="physics-gravity-section">
                         <div class="section-header" data-toggle="physicsGravity" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Physics (Gravity)</h3>
                         </div>
                         <div class="section-content" id="section-physicsGravity" style="display:none;">
@@ -329,7 +330,7 @@
 
                     <section class="param-section collapsed" id="physics-radial-section" style="display:none;">
                         <div class="section-header" data-toggle="physicsRadial" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Physics (Radial)</h3>
                         </div>
                         <div class="section-content" id="section-physicsRadial" style="display:none;">
@@ -368,7 +369,7 @@
 
                     <section class="param-section collapsed">
                         <div class="section-header" data-toggle="size" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Size</h3>
                         </div>
                         <div class="section-content" id="section-size" style="display:none;">
@@ -397,7 +398,7 @@
 
                     <section class="param-section collapsed">
                         <div class="section-header" data-toggle="rotation" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Rotation</h3>
                         </div>
                         <div class="section-content" id="section-rotation" style="display:none;">
@@ -426,7 +427,7 @@
 
                     <section class="param-section collapsed">
                         <div class="section-header" data-toggle="colorStart" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Color (Start)</h3>
                         </div>
                         <div class="section-content" id="section-colorStart" style="display:none;">
@@ -499,7 +500,7 @@
 
                     <section class="param-section collapsed">
                         <div class="section-header" data-toggle="colorEnd" role="button" aria-expanded="false">
-                            <span class="toggle-icon">&#x25B6;</span>
+                            <span class="toggle-icon">&#x25B6;&#xFE0E;</span>
                             <h3>Color (End)</h3>
                         </div>
                         <div class="section-content" id="section-colorEnd" style="display:none;">
@@ -568,7 +569,7 @@
 
                     <section class="param-section">
                         <div class="section-header" data-toggle="texture" role="button" aria-expanded="true">
-                            <span class="toggle-icon">&#x25BC;</span>
+                            <span class="toggle-icon">&#x25BC;&#xFE0E;</span>
                             <h3>Texture</h3>
                         </div>
                         <div class="section-content" id="section-texture">
@@ -594,7 +595,7 @@
                     <!-- Values are OpenGL blend function enum constants (e.g. 770 = GL_SRC_ALPHA) -->
                     <section class="param-section">
                         <div class="section-header" data-toggle="blend" role="button" aria-expanded="true">
-                            <span class="toggle-icon">&#x25BC;</span>
+                            <span class="toggle-icon">&#x25BC;&#xFE0E;</span>
                             <h3>Blend Mode</h3>
                         </div>
                         <div class="section-content" id="section-blend">
@@ -638,7 +639,7 @@
                 <div id="image-params-container" style="display:none;">
                     <section class="param-section">
                         <div class="section-header">
-                            <span class="toggle-icon">&#x25BC;</span>
+                            <span class="toggle-icon">&#x25BC;&#xFE0E;</span>
                             <h3>Image Properties</h3>
                         </div>
                         <div class="section-content">
@@ -712,6 +713,7 @@
         </div>
     </div>
 
+    <script src="js/detectMobile.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

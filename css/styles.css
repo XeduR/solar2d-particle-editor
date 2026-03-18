@@ -313,6 +313,13 @@ body {
     color: rgba(255, 255, 255, 0.9);
 }
 
+.overlay-mouse-icon {
+    height: 1.1em;
+    vertical-align: -0.15em;
+    filter: brightness(0) invert(1);
+    opacity: 0.9;
+}
+
 /* ============================================================================
    CANVAS SETTINGS POPOVER
    ============================================================================ */
@@ -1732,7 +1739,7 @@ kbd {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    z-index: 15;
+    z-index: 25;
     width: 24px;
     height: 48px;
     background: rgba(20, 21, 24, 0.9);
@@ -1741,6 +1748,8 @@ kbd {
     border-radius: 4px;
     font-size: 12px;
     padding: 0;
+    cursor: pointer;
+    transition: left 0.25s ease, right 0.25s ease;
 }
 
 .panel-toggle:hover {
@@ -1750,10 +1759,18 @@ kbd {
 }
 
 .panel-toggle-left {
+    left: calc(var(--sidebar-left-width) + 4px);
+}
+
+.panel-toggle-left.toggle-collapsed {
     left: 4px;
 }
 
 .panel-toggle-right {
+    right: calc(var(--sidebar-right-width) + 4px);
+}
+
+.panel-toggle-right.toggle-collapsed {
     right: 4px;
 }
 

@@ -812,6 +812,12 @@
      * Main initialization function; sets up all UI event listeners and initial state.
      */
     function initUI() {
+        // Show the appropriate canvas overlay for the device type
+        if ( window.mobileCheck && window.mobileCheck() ) {
+            document.getElementById( "overlay-desktop" ).style.display = "none";
+            document.getElementById( "overlay-mobile" ).style.display = "";
+        }
+
         setupSectionToggles();
         setupParamSearch();
         setupAddEmitter();
@@ -949,11 +955,13 @@
             var panel = side === "left" ? leftPanel : rightPanel;
             var isOpen = !panel.classList.contains( "panel-collapsed" );
 
+            btn.classList.toggle( "toggle-collapsed", !isOpen );
+
             if ( side === "left" ) {
-                btn.textContent = isOpen ? "\u25C0" : "\u25B6";
+                btn.textContent = isOpen ? "\u25C0\uFE0E" : "\u25B6\uFE0E";
                 btn.title = isOpen ? "Hide left panel" : "Show left panel";
             } else {
-                btn.textContent = isOpen ? "\u25B6" : "\u25C0";
+                btn.textContent = isOpen ? "\u25B6\uFE0E" : "\u25C0\uFE0E";
                 btn.title = isOpen ? "Hide right panel" : "Show right panel";
             }
         }
@@ -983,10 +991,29 @@
             updateBackdrop();
         }
 
+        function raisePanel( side ) {
+            var isLeft = side === "left";
+            var panel = isLeft ? leftPanel : rightPanel;
+            var btn = isLeft ? btnLeft : btnRight;
+            var otherPanel = isLeft ? rightPanel : leftPanel;
+            var otherBtn = isLeft ? btnRight : btnLeft;
+
+            // Raised panel and its button go on top
+            panel.style.zIndex = "21";
+            btn.style.zIndex = "26";
+            // Other panel's button drops below the raised panel
+            otherPanel.style.zIndex = "";
+            otherBtn.style.zIndex = "19";
+        }
+
         function togglePanel( side ) {
             var panel = side === "left" ? leftPanel : rightPanel;
             var willOpen = panel.classList.contains( "panel-collapsed" );
             setCollapsed( panel, !willOpen );
+
+            if ( willOpen ) {
+                raisePanel( side );
+            }
 
             // Only persist if in desktop mode
             if ( !isNarrow() ) {
@@ -1450,7 +1477,7 @@
             if ( savedState && savedState.hasOwnProperty( toggleId ) && content ) {
                 var shouldCollapse = savedState[toggleId];
                 content.style.display = shouldCollapse ? "none" : "block";
-                if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6" : "\u25BC";
+                if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6\uFE0E" : "\u25BC\uFE0E";
                 section.classList.toggle( "collapsed", shouldCollapse );
             }
 
@@ -1462,7 +1489,7 @@
 
                 var wasCollapsed = content.style.display === "none";
                 content.style.display = wasCollapsed ? "block" : "none";
-                if ( icon ) icon.innerHTML = wasCollapsed ? "\u25BC" : "\u25B6";
+                if ( icon ) icon.innerHTML = wasCollapsed ? "\u25BC\uFE0E" : "\u25B6\uFE0E";
                 section.classList.toggle( "collapsed", !wasCollapsed );
                 header.setAttribute( "aria-expanded", wasCollapsed ? "true" : "false" );
 
@@ -1516,7 +1543,7 @@
                         if ( saved && saved.hasOwnProperty( toggleId ) && content ) {
                             var shouldCollapse = saved[toggleId];
                             content.style.display = shouldCollapse ? "none" : "block";
-                            if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6" : "\u25BC";
+                            if ( icon ) icon.innerHTML = shouldCollapse ? "\u25B6\uFE0E" : "\u25BC\uFE0E";
                             sections[i].classList.toggle( "collapsed", shouldCollapse );
                             header.setAttribute( "aria-expanded", shouldCollapse ? "false" : "true" );
                         }
@@ -1571,7 +1598,7 @@
                     var content = sections[i].querySelector( ".section-content" );
                     var icon = sections[i].querySelector( ".toggle-icon" );
                     if ( content ) content.style.display = "block";
-                    if ( icon ) icon.innerHTML = "\u25BC";
+                    if ( icon ) icon.innerHTML = "\u25BC\uFE0E";
                     sections[i].classList.remove( "collapsed" );
                     if ( header ) header.setAttribute( "aria-expanded", "true" );
 
@@ -2968,6 +2995,92 @@
         isPanning = false;
     }
 
+    // ---- Touch (mobile) pinch-zoom & two-finger pan state ----
+    var touchState = {
+        active: false,
+        startDist: 0,
+        startZoom: 1,
+        startMidX: 0,
+        startMidY: 0,
+        startTx: 0,
+        startTy: 0
+    };
+
+    function getTouchDistance( t1, t2 ) {
+        var dx = t1.clientX - t2.clientX;
+        var dy = t1.clientY - t2.clientY;
+        return Math.sqrt( dx * dx + dy * dy );
+    }
+
+    function getTouchMidpoint( t1, t2 ) {
+        return {
+            x: ( t1.clientX + t2.clientX ) / 2,
+            y: ( t1.clientY + t2.clientY ) / 2
+        };
+    }
+
+    function handleTouchStart( e ) {
+        if ( e.touches.length !== 2 ) return;
+        e.preventDefault();
+        var t1 = e.touches[0];
+        var t2 = e.touches[1];
+        var mid = getTouchMidpoint( t1, t2 );
+        touchState.active = true;
+        touchState.startDist = getTouchDistance( t1, t2 );
+        touchState.startZoom = cssZoom;
+        touchState.startMidX = mid.x;
+        touchState.startMidY = mid.y;
+        touchState.startTx = cssTx;
+        touchState.startTy = cssTy;
+    }
+
+    function handleTouchMove( e ) {
+        if ( !touchState.active || e.touches.length !== 2 ) return;
+        e.preventDefault();
+        var t1 = e.touches[0];
+        var t2 = e.touches[1];
+        var mid = getTouchMidpoint( t1, t2 );
+        var dist = getTouchDistance( t1, t2 );
+
+        // Pinch zoom
+        var oldZoom = cssZoom;
+        var newZoom = touchState.startZoom * ( dist / touchState.startDist );
+        newZoom = Math.max( CSS_MIN_ZOOM, Math.min( CSS_MAX_ZOOM, newZoom ) );
+
+        // Zoom toward pinch midpoint
+        var iframe = document.getElementById( "solar2d-iframe" );
+        if ( iframe ) {
+            var rect = iframe.getBoundingClientRect();
+            var localX = ( mid.x - rect.left ) / oldZoom;
+            var localY = ( mid.y - rect.top ) / oldZoom;
+            cssTx += localX * ( oldZoom - newZoom );
+            cssTy += localY * ( oldZoom - newZoom );
+        }
+
+        cssZoom = newZoom;
+
+        // Two-finger pan
+        cssTx += mid.x - touchState.startMidX;
+        cssTy += mid.y - touchState.startMidY;
+        touchState.startMidX = mid.x;
+        touchState.startMidY = mid.y;
+
+        applyCssZoom();
+    }
+
+    function handleTouchEnd( e ) {
+        if ( e.touches.length < 2 ) {
+            touchState.active = false;
+        }
+    }
+
+    function addTouchZoomPan( target ) {
+        target.addEventListener( "touchstart", handleTouchStart, { passive: false } );
+        target.addEventListener( "touchmove", handleTouchMove, { passive: false } );
+        target.addEventListener( "touchend", handleTouchEnd );
+        target.addEventListener( "touchcancel", handleTouchEnd );
+    }
+
     function setupCssZoom() {
         var iframe = document.getElementById( "solar2d-iframe" );
         if ( !iframe ) return;
@@ -2988,6 +3101,9 @@
                     startPan( e );
                 }
             } );
+
+            // Mobile: pinch-zoom and two-finger pan on the container
+            addTouchZoomPan( container );
         }
 
         // Set up iframe-level listeners once the iframe content loads.
@@ -3056,6 +3172,9 @@
                     e.stopPropagation();
                 }
             }, true );
+
+            // Mobile: pinch-zoom and two-finger pan inside the iframe
+            addTouchZoomPan( iframeDoc );
         } );
 
         // Parent document listeners: handle pan when cursor leaves the iframe
