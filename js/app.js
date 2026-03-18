@@ -3027,6 +3027,7 @@
     function handleTouchStart( e ) {
         if ( e.touches.length !== 2 ) return;
         e.preventDefault();
+        e.stopPropagation();
         var t1 = e.touches[0];
         var t2 = e.touches[1];
         var midX = ( t1.clientX + t2.clientX ) / 2;
@@ -3054,6 +3055,7 @@
     function handleTouchMove( e ) {
         if ( !touchState.active || e.touches.length !== 2 ) return;
         e.preventDefault();
+        e.stopPropagation();
         var t1 = e.touches[0];
         var t2 = e.touches[1];
         var midX = ( t1.clientX + t2.clientX ) / 2;
@@ -3104,6 +3106,9 @@
     }
 
     function handleTouchEnd( e ) {
+        if ( touchState.active ) {
+            e.stopPropagation();
+        }
         if ( e.touches.length < 2 ) {
             touchState.active = false;
             touchState.mode = TOUCH_MODE_UNDECIDED;
@@ -3185,65 +3190,33 @@
                 }
             }, true );
 
-            // Block mouse compatibility events for right/middle clicks.
-            // Emscripten uses mousedown/mouseup/mousemove (not pointer events),
-            // so these must be blocked explicitly — preventDefault on pointerdown
-            // should suppress mousedown per spec, but browsers are inconsistent.
+            // Block mouse events from Emscripten for right/middle clicks AND
+            // during two-finger touch gestures (browsers synthesize mouse events
+            // from touch, which makes Emscripten drag objects while we pan/zoom).
             iframeDoc.addEventListener( "mousedown", function( e ) {
-                if ( e.button === 2 || e.button === 1 ) {
+                if ( e.button === 2 || e.button === 1 || touchState.active ) {
                     e.preventDefault();
                     e.stopPropagation();
                 }
             }, true );
 
             iframeDoc.addEventListener( "mouseup", function( e ) {
-                if ( e.button === 2 || e.button === 1 ) {
+                if ( e.button === 2 || e.button === 1 || touchState.active ) {
                     e.preventDefault();
                     e.stopPropagation();
                 }
             }, true );
 
             iframeDoc.addEventListener( "mousemove", function( e ) {
-                if ( isPanning ) {
+                if ( isPanning || touchState.active ) {
+                    e.preventDefault();
                     e.stopPropagation();
                 }
             }, true );
 
-            // Mobile: block touch events from Emscripten during two-finger gestures.
-            // Must use capture phase to intercept before Emscripten's handlers.
-            iframeDoc.addEventListener( "touchstart", function( e ) {
-                if ( e.touches.length >= 2 ) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleTouchStart( e );
-                }
-            }, { capture: true, passive: false } );
-
-            iframeDoc.addEventListener( "touchmove", function( e ) {
-                if ( touchState.active ) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleTouchMove( e );
-                }
-            }, { capture: true, passive: false } );
-
-            iframeDoc.addEventListener( "touchend", function( e ) {
-                if ( touchState.active ) {
-                    e.stopPropagation();
-                    handleTouchEnd( e );
-                }
-            }, { capture: true } );
-
-            iframeDoc.addEventListener( "touchcancel", function( e ) {
-                if ( touchState.active ) {
-                    e.stopPropagation();
-                    handleTouchEnd( e );
-                }
-            }, { capture: true } );
-
-            // Prevent native touch gestures inside the iframe
-            iframeDoc.documentElement.style.touchAction = "none";
-            if ( iframeDoc.body ) iframeDoc.body.style.touchAction = "none";
+            // Mobile: handle two-finger gestures inside the iframe (bubble phase
+            // for iOS compatibility) and block Emscripten's touch handlers.
+            addTouchZoomPan( iframeDoc );
         } );
 
         // Parent document listeners: handle pan when cursor leaves the iframe
