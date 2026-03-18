@@ -261,6 +261,7 @@ body {
     position: relative;
     background: var(--color-bg-primary);
     overflow: hidden;
+    touch-action: none;
 }
 
 #solar2d-iframe {

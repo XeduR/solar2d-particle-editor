@@ -2995,7 +2995,9 @@
         isPanning = false;
     }
 
-    // ---- Touch (mobile) pinch-zoom & two-finger pan state ----
+    // ---- Touch (mobile) pinch-zoom & two-finger pan ----
+    // Uses absolute (non-incremental) math: every touchmove recomputes the
+    // full transform from the gesture's start state, avoiding feedback loops.
     var touchState = {
         active: false,
         startDist: 0,
@@ -3003,7 +3005,9 @@
         startMidX: 0,
         startMidY: 0,
         startTx: 0,
-        startTy: 0
+        startTy: 0,
+        anchorX: 0,
+        anchorY: 0
     };
 
     function getTouchDistance( t1, t2 ) {
@@ -3012,26 +3016,31 @@
         return Math.sqrt( dx * dx + dy * dy );
     }
 
-    function getTouchMidpoint( t1, t2 ) {
-        return {
-            x: ( t1.clientX + t2.clientX ) / 2,
-            y: ( t1.clientY + t2.clientY ) / 2
-        };
-    }
-
     function handleTouchStart( e ) {
         if ( e.touches.length !== 2 ) return;
         e.preventDefault();
         var t1 = e.touches[0];
         var t2 = e.touches[1];
-        var mid = getTouchMidpoint( t1, t2 );
+        var midX = ( t1.clientX + t2.clientX ) / 2;
+        var midY = ( t1.clientY + t2.clientY ) / 2;
+        var dist = getTouchDistance( t1, t2 );
+        if ( dist < 1 ) return;
+
+        var container = document.getElementById( "canvas-container" );
+        var rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+
         touchState.active = true;
-        touchState.startDist = getTouchDistance( t1, t2 );
+        touchState.startDist = dist;
         touchState.startZoom = cssZoom;
-        touchState.startMidX = mid.x;
-        touchState.startMidY = mid.y;
+        touchState.startMidX = midX;
+        touchState.startMidY = midY;
         touchState.startTx = cssTx;
         touchState.startTy = cssTy;
+        // Iframe-local point under the initial midpoint (zoom anchor)
+        touchState.anchorX = ( midX - rect.left - cssTx ) / cssZoom;
+        touchState.anchorY = ( midY - rect.top - cssTy ) / cssZoom;
+        touchState.containerLeft = rect.left;
+        touchState.containerTop = rect.top;
     }
 
     function handleTouchMove( e ) {
@@ -3039,31 +3048,18 @@
         e.preventDefault();
         var t1 = e.touches[0];
         var t2 = e.touches[1];
-        var mid = getTouchMidpoint( t1, t2 );
+        var midX = ( t1.clientX + t2.clientX ) / 2;
+        var midY = ( t1.clientY + t2.clientY ) / 2;
         var dist = getTouchDistance( t1, t2 );
 
-        // Pinch zoom
-        var oldZoom = cssZoom;
+        // Zoom: ratio of current distance to start distance
         var newZoom = touchState.startZoom * ( dist / touchState.startDist );
         newZoom = Math.max( CSS_MIN_ZOOM, Math.min( CSS_MAX_ZOOM, newZoom ) );
 
-        // Zoom toward pinch midpoint
-        var iframe = document.getElementById( "solar2d-iframe" );
-        if ( iframe ) {
-            var rect = iframe.getBoundingClientRect();
-            var localX = ( mid.x - rect.left ) / oldZoom;
-            var localY = ( mid.y - rect.top ) / oldZoom;
-            cssTx += localX * ( oldZoom - newZoom );
-            cssTy += localY * ( oldZoom - newZoom );
-        }
-
+        // Combined pan + zoom-anchor: place the anchor point under the current midpoint
+        cssTx = midX - touchState.containerLeft - touchState.anchorX * newZoom;
+        cssTy = midY - touchState.containerTop - touchState.anchorY * newZoom;
         cssZoom = newZoom;
-
-        // Two-finger pan
-        cssTx += mid.x - touchState.startMidX;
-        cssTy += mid.y - touchState.startMidY;
-        touchState.startMidX = mid.x;
-        touchState.startMidY = mid.y;
 
         applyCssZoom();
     }
